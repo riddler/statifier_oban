@@ -9,26 +9,57 @@ defmodule StatifierOban.MixProject do
       app: :statifier_oban,
       version: @version,
       elixir: "~> 1.18",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       name: "StatifierOban",
       description: "Durable timers and async invoke execution for Statifier, backed by Oban",
-      source_url: @source_url
+      source_url: @source_url,
+      test_coverage: [tool: ExCoveralls],
+      dialyzer: [plt_add_apps: [:ex_unit]],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.html": :test
+      ]
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
       extra_applications: [:logger]
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   defp deps do
     [
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+      statifier_dep(),
+      {:oban, "~> 2.23"},
+
+      # Dev / test
+      {:ex_quality, "~> 0.13", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:excoveralls, "~> 0.18", only: :test},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
+  end
+
+  # Statifier is not on Hex - it has no package/0 and no tags - so the default
+  # is a git dep whose SHA mix.lock pins. Note the consequence: Hex refuses to
+  # publish a package that carries a git dependency, so this package cannot
+  # ship until statifier is published. That is upstream's call, not ours.
+  #
+  # Export STATIFIER_PATH to point at a local checkout while co-developing a
+  # change that spans both repos. It is an env var rather than a mix.exs edit
+  # so the override never lands in a commit by accident.
+  defp statifier_dep do
+    case System.get_env("STATIFIER_PATH") do
+      nil -> {:statifier, github: "riddler/statifier-ex", branch: "main"}
+      path -> {:statifier, path: path, override: true}
+    end
   end
 end
