@@ -26,7 +26,7 @@ until the work here is genuinely under way.
 | A bead pairs with one in statifier-ex | Both halves carry `mirrors: <id>` as the first line of the description |
 | You are about to schedule, claim, plan against, or cite the status of a mirrored bead | Re-read the other tracker first and write a new dated note above the old one, then act |
 | A `mirrors:` line names an id that no longer resolves | Broken immediately, not stale. Fix it with one `bd update` the moment you notice |
-| The contract in statifier-ex looks wrong | Say so and raise it there. Do not work around it here: a host that quietly deviates from ADR-0052 is the failure that record exists to prevent |
+| The contract in statifier-ex looks wrong | Say so and raise it there. Do not work around it here: a host that quietly deviates from ADR-0054 is the failure that record exists to prevent |
 
 ## Agent authority in this repo
 
@@ -71,20 +71,23 @@ already specific about what a host may and may not do:
 
 - `docs/durable-timers.md` - the host-facing recipe: consume the effect,
   schedule externally, feed the fired event back in.
-- `docs/adr/0052-durable-timers-consume-the-effect-vocabulary.md` - the rules.
+- `docs/adr/0054-durable-timers-consume-the-effect-vocabulary.md` - the rules.
   Consume the **effect** vocabulary (`{:send_delayed, %SendDelayed{}}`,
   `{:cancel, %Cancel{}}`), never the instruction vocabulary (`{:schedule, ...}`,
   `{:cancel_timers, ...}`), which is explicitly opaque outside the library.
 
 Two recorded limits shape what this package can promise:
 
-- The contract covers delayed sends that resolve to the session itself. A send
+- `docs/adr/0055-non-self-delayed-send-routes-stay-the-librarys.md` - the
+  contract covers delayed sends that resolve to the session itself. A send
   routed to `#_internal`, `#_parent`, `#_invokeid`, or an external session is
   left to the library, because the resolved route does not travel on the effect.
 - The dedup key is `{session scope, send_id, macrostep, microstep, round,
-  c_index, owner}`. Two sends executed in the same microstep from the same
-  document position still collide, so a `<foreach>` body that schedules on every
-  iteration needs author-generated ids.
+  c_index, owner}`. A `<foreach>` body re-executes the same static `c_index`
+  list every iteration, so a hand-written `id` on a `<send delay="...">` inside
+  one collides on every field of the key. Leave the `id` off: a library-
+  generated id advances `send_counter` per execution and the key is unique
+  again.
 
 Scoping is mandatory in any stored key: Statifier's `send_counter` restarts at 0
 per chart run, so a bare `send_id` is unique only within a run.
