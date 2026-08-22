@@ -7,17 +7,20 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
   alias Statifier.Effect.SendDelayed
   alias StatifierOban.Timer.Key
 
-  # sabotage: changed `build_cancellation_key/2` to append
-  # `:erlang.unique_integer()` to `send_id` before building the key - both
-  # properties went red (two derivations of the same input stopped
-  # matching), reverted. Verified for real.
   describe "determinism" do
+    # sabotage: changed `build_cancellation_key/2` to append
+    # `:erlang.unique_integer()` to `send_id` before building the key - the
+    # property went red (two derivations of the same input stopped
+    # matching), reverted. Verified for real.
     property "two derivations of the same scope and effect are equal" do
       check all(scope <- scope(), effect <- one_of([send_delayed(), cancel()])) do
         assert Key.cancellation_key(scope, effect) == Key.cancellation_key(scope, effect)
       end
     end
 
+    # sabotage: added `System.unique_integer([:positive])` to the `ordinal`
+    # written into `%DedupKey{}` in `Key.dedup_key/2` - property went red
+    # (two derivations of one struct stopped matching), reverted.
     property "two structurally equal SendDelayed effects give equal dedup keys" do
       check all(scope <- scope(), effect <- send_delayed()) do
         rebuilt = struct!(SendDelayed, Map.from_struct(effect))
@@ -43,56 +46,64 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # sabotage: changed `c_index: send_delayed.c_index` to `c_index: 0`
-  # (hardcoded) in the `%DedupKey{}` build in `Key.dedup_key/2` - the
-  # c_index-only-diff property went red (two effects differing only in
-  # c_index produced equal keys), reverted. Verified for real.
-  describe "dedup key injectivity" do
-    property "equal dedup keys under one scope imply all seven components are equal" do
+  # The compact dedup key ADR-0059 decision 3 blesses: `{scope, ordinal}`,
+  # unique on its own because upstream's `timer_counter` is session-global
+  # and monotone. Everything else on the effect is row data.
+  describe "dedup key rides on the ordinal" do
+    # sabotage: hardcoded `ordinal: 1` in `dedup_key/2`'s `%DedupKey{}`
+    # build - property went red (two effects differing only in ordinal
+    # produced equal keys), reverted.
+    property "equal dedup keys under one scope imply equal ordinals" do
       check all(scope <- scope(), a <- send_delayed(), b <- send_delayed()) do
         {:ok, key_a} = Key.dedup_key(scope, a)
         {:ok, key_b} = Key.dedup_key(scope, b)
 
-        components_equal? =
-          a.send_id == b.send_id and a.macrostep == b.macrostep and
-            a.microstep == b.microstep and a.round == b.round and
-            a.c_index == b.c_index and a.owner == b.owner
-
-        assert key_a == key_b == components_equal?
+        assert key_a == key_b == (a.ordinal == b.ordinal)
       end
     end
 
-    # sabotage: hardcoded `c_index: nil` in `dedup_key/2`'s `%DedupKey{}`
+    # sabotage: hardcoded `ordinal: 1` in `dedup_key/2`'s `%DedupKey{}`
     # build - property went red, reverted.
-    property "two sends sharing every component but c_index produce distinct dedup keys" do
+    property "two sends sharing every component but ordinal produce distinct dedup keys" do
       check all(
               scope <- scope(),
               base <- send_delayed(),
-              c_index_a <- counter(),
-              c_index_b <- counter(),
-              c_index_a != c_index_b
+              ordinal_a <- ordinal(),
+              ordinal_b <- ordinal(),
+              ordinal_a != ordinal_b
             ) do
-        effect_a = %{base | c_index: c_index_a}
-        effect_b = %{base | c_index: c_index_b}
+        effect_a = %{base | ordinal: ordinal_a}
+        effect_b = %{base | ordinal: ordinal_b}
 
         assert Key.dedup_key(scope, effect_a) != Key.dedup_key(scope, effect_b)
       end
     end
 
-    # sabotage: hardcoded `owner: nil` in `dedup_key/2`'s `%DedupKey{}`
-    # build - property went red, reverted.
-    property "two sends sharing every component but owner produce distinct dedup keys" do
+    # sabotage: bound `macrostep: m` in `dedup_key/2`'s head and changed the
+    # `%DedupKey{}` build to `ordinal: ordinal + m` (folding a position
+    # field into the key) - property went red, reverted.
+    property "send_id and position fields are row data: changing them all keeps the key" do
       check all(
               scope <- scope(),
               base <- send_delayed(),
-              owner_a <- owner(),
-              owner_b <- owner(),
-              owner_a != owner_b
+              send_id <- send_id(),
+              macrostep <- counter(),
+              microstep <- counter(),
+              round <- counter(),
+              c_index <- one_of([counter(), constant(nil)]),
+              owner <- owner()
             ) do
-        effect_a = %{base | owner: owner_a}
-        effect_b = %{base | owner: owner_b}
+        moved = %{
+          base
+          | send_id: send_id,
+            macrostep: macrostep,
+            microstep: microstep,
+            round: round,
+            c_index: c_index,
+            owner: owner
+        }
 
-        assert Key.dedup_key(scope, effect_a) != Key.dedup_key(scope, effect_b)
+        assert Key.dedup_key(scope, base) == Key.dedup_key(scope, moved)
       end
     end
   end
@@ -117,11 +128,8 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
         {:ok, cancellation_key_b} = Key.cancellation_key(scope, effect_b)
         assert cancellation_key_a == cancellation_key_b
 
-        {:ok, dedup_key_a} = Key.dedup_key(scope, effect_a)
-        {:ok, dedup_key_b} = Key.dedup_key(scope, effect_b)
-
-        assert Key.cancels?(cancellation_key_a, dedup_key_a)
-        assert Key.cancels?(cancellation_key_b, dedup_key_b)
+        assert Key.cancels?(cancellation_key_a, scope, effect_a)
+        assert Key.cancels?(cancellation_key_b, scope, effect_b)
       end
     end
   end
@@ -168,57 +176,54 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Residual collision, characterized deliberately - this is a statement of a
-  # known limitation, NOT an assertion that collisions are acceptable.
-  #
-  # An author-written `id` on a `<send delay="...">` inside a `<foreach>` body
-  # is reused verbatim across iterations, and `<foreach>` re-executes the same
-  # static c_index/owner list every iteration in one microstep. Two genuinely
-  # distinct timers therefore agree on all seven components and a durable
-  # store dedups them down to one - the library keeps them as two, so a timer
-  # the chart expects silently never fires.
-  #
-  # ADR-0054 recorded the author-side workaround (omit the hand-written `id`).
-  # ADR-0059 has since RETIRED that workaround upstream by adding a
-  # per-execution `ordinal` to both effect structs; the eight-component key is
-  # per-instance and a hand-written id inside a `<foreach>` is fully
-  # supported. What follows describes the statifier SHA `mix.lock` pins, which
-  # predates that field - not the current upstream contract. When the pin is
-  # bumped (sob-7yx), this whole block should go red and be replaced by a
-  # property asserting the two iterations produce DIFFERENT keys.
-  #
-  # sabotage: changed `dedup_key/2`'s `%DedupKey{}` build to store
-  # `send_id <> Integer.to_string(System.unique_integer())` instead of
-  # `send_id` - the same-struct-replayed property went red (two
-  # derivations of one struct stopped matching), reverted. Verified for
-  # real.
-  describe "<foreach> residual, characterized" do
-    property "two distinct foreach iterations collide on the seven-component key" do
-      check all(scope <- scope(), effect <- send_delayed()) do
-        # Two separately built structs standing for two iterations of one
-        # `<foreach>` body: same author id, same content position, same
-        # microstep - distinct timers the library keeps as two.
-        iteration_1 = %{effect | id_from_author?: true}
-        iteration_2 = %{effect | id_from_author?: true}
-
-        assert Key.dedup_key(scope, iteration_1) == Key.dedup_key(scope, iteration_2)
-      end
-    end
-
-    # sabotage: hardcoded `send_id: "fixed"` in `dedup_key/2`'s
-    # `%DedupKey{}` build - property went red, reverted.
-    property "the same effect with distinct generated ids yields distinct dedup keys" do
+  # The retirement this bead exists for. ADR-0054's residual collision -
+  # two `<foreach>` iterations of `<send id="x" delay="...">` agreeing on
+  # every key component - is closed by ADR-0059: each execution mints a
+  # fresh ordinal from a session-global counter, so a hand-written `id`
+  # inside a `<foreach>` is fully supported under a durable scheduler. The
+  # characterization property that pinned the old seven-component collision
+  # is replaced by these assertions of the fix.
+  describe "<foreach> iterations are per-instance" do
+    # sabotage: hardcoded `ordinal: 1` in `dedup_key/2`'s `%DedupKey{}`
+    # build - property went red (the two iterations collided again),
+    # reverted.
+    property "two iterations sharing an author id and position get distinct dedup keys" do
       check all(
               scope <- scope(),
               effect <- send_delayed(),
-              send_id_a <- send_id(),
-              send_id_b <- send_id(),
-              send_id_a != send_id_b
+              ordinal_a <- ordinal(),
+              ordinal_b <- ordinal(),
+              ordinal_a != ordinal_b
             ) do
-        effect_a = %{effect | send_id: send_id_a, id_from_author?: false}
-        effect_b = %{effect | send_id: send_id_b, id_from_author?: false}
+        # Two iterations of one `<foreach>` body: same author id, same
+        # content position, same microstep - only the ordinal differs.
+        iteration_1 = %{effect | id_from_author?: true, ordinal: ordinal_a}
+        iteration_2 = %{effect | id_from_author?: true, ordinal: ordinal_b}
 
-        assert Key.dedup_key(scope, effect_a) != Key.dedup_key(scope, effect_b)
+        assert Key.dedup_key(scope, iteration_1) != Key.dedup_key(scope, iteration_2)
+      end
+    end
+
+    # sabotage: collapsed `cancels?/3` to a single false clause - property
+    # went red (the shared-id cancel stopped addressing both rows),
+    # reverted.
+    property "one cancel under the shared id still addresses every iteration's row" do
+      check all(
+              scope <- scope(),
+              effect <- send_delayed(),
+              ordinal_a <- ordinal(),
+              ordinal_b <- ordinal(),
+              ordinal_a != ordinal_b,
+              cancel_effect <- cancel()
+            ) do
+        iteration_1 = %{effect | id_from_author?: true, ordinal: ordinal_a}
+        iteration_2 = %{effect | id_from_author?: true, ordinal: ordinal_b}
+        matching_cancel = %{cancel_effect | send_id: effect.send_id}
+
+        {:ok, cancellation_key} = Key.cancellation_key(scope, matching_cancel)
+
+        assert Key.cancels?(cancellation_key, scope, iteration_1)
+        assert Key.cancels?(cancellation_key, scope, iteration_2)
       end
     end
   end
