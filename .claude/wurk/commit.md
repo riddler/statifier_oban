@@ -64,13 +64,14 @@ smaller than statifier-ex's; that decision stands (statifier-ex
 docs/family-reference.md marks the custom stages as not-reference). Report
 the finding and stop.
 
-## Gate attestation is not wired up yet
+## Gate attestation: dep-provided `mix gate.verify`
 
-The manifest declares no `gate.attest` command, so an unattended
-(`/wurk:commit --auto`) run records `attested: false` and refuses to advance.
-That is the known state, not a fault to work around: bead `sob-ehl` adopts
-`mix gate.verify` (the family's one adoptable verifier per statifier-ex
-docs/family-reference.md - it adds no gate stage) and wires `gate.attest` to
-it. Until that lands, review the full gate output directly in interactive
-runs, and treat an `--auto` refusal on attestation as expected - report it,
-do not fake an attestation.
+The manifest wires `gate.attest` to `mix gate.verify` (bead `sob-ehl`). The
+task ships in the `statifier` dependency - the family's one adoptable
+verifier per statifier-ex docs/family-reference.md - and this repo carries
+no local copy of it, by the operator's ruling on st-hcgl. It adds no gate
+stage: it re-runs `mix quality --report -` and attests that the run was
+full (status ok, scope all, no profile, no run-narrowing skip). An
+unattended (`/wurk:commit --auto`) run therefore advances only on
+`attested: true`; do not fake an attestation, and treat an attest failure
+as a narrowed or red gate to fix, not a prompt to bypass.
