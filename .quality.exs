@@ -23,6 +23,9 @@
   compile: [
     warnings_as_errors: true
   ],
+  format: [
+    check: true
+  ],
   credo: [
     strict: true
   ],

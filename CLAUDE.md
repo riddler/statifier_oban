@@ -147,8 +147,9 @@ mix quality --profile loop   # inner loop: format, compile, credo, changed tests
 mix test                     # the suite
 ```
 
-Full `mix quality` must be green before any commit. The gate formats your
-code - do not run `mix format` as a separate step.
+Full `mix quality` must be green before any commit. The Format stage runs in
+check mode (`format: [check: true]` in `.quality.exs`): it reports drift and
+writes nothing, so run `mix format` yourself before committing.
 
 Set `STATIFIER_PATH` to a local statifier-ex checkout when co-developing a
 change that spans both repos; otherwise the git pin in `mix.lock` governs.
