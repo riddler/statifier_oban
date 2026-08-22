@@ -14,7 +14,7 @@ defmodule StatifierOban.Timer.JobArgs do
     `c_index`, `owner`), self-describing in the store during an incident.
   - The two host-opaque fields, `data` and `caller_context`, are arbitrary
     terms with no JSON shape, so they ride as tagged
-    `:erlang.term_to_binary/1` payloads (Base64) and come back
+    `:erlang.term_to_binary/1` payloads (`StatifierOban.OpaqueTerm`) and come back
     byte-identical. `caller_context` stays row data, never a key component
     (st-ADR-0063 decision 6). Decoding uses `:safe`, so a payload naming
     an atom the reading node has never seen decodes to a typed error
@@ -28,8 +28,7 @@ defmodule StatifierOban.Timer.JobArgs do
   """
 
   alias Statifier.Effect.SendDelayed
-
-  @term_tag "t2b64"
+  alias StatifierOban.OpaqueTerm
 
   @typedoc "String-keyed args map as Oban stores and redelivers it."
   @type args :: %{optional(String.t()) => term()}
@@ -138,38 +137,15 @@ defmodule StatifierOban.Timer.JobArgs do
   # -- opaque terms: tagged term_to_binary payloads. nil stays nil, so the
   # common case costs nothing and stays readable in the row.
 
-  @spec encode_term(term()) :: nil | %{String.t() => String.t()}
-  defp encode_term(nil), do: nil
+  # The encoding itself lives in `StatifierOban.OpaqueTerm`, shared with
+  # `StatifierOban.Invoke.JobArgs` so both job kinds' rows stay mutually
+  # readable during an incident.
 
-  defp encode_term(term),
-    do: %{@term_tag => Base.encode64(:erlang.term_to_binary(term))}
+  @spec encode_term(term()) :: nil | %{String.t() => String.t()}
+  defp encode_term(term), do: OpaqueTerm.encode(term)
 
   @spec decode_term_field(args(), String.t()) :: {:ok, term()} | {:error, decode_error()}
-  defp decode_term_field(args, field) do
-    case Map.get(args, field) do
-      nil -> {:ok, nil}
-      %{@term_tag => encoded} when is_binary(encoded) -> decode_term(field, encoded)
-      other -> {:error, {:invalid_field, field, other}}
-    end
-  end
-
-  @spec decode_term(String.t(), String.t()) :: {:ok, term()} | {:error, decode_error()}
-  defp decode_term(field, encoded) do
-    case Base.decode64(encoded) do
-      {:ok, binary} -> safe_binary_to_term(field, binary)
-      :error -> {:error, {:invalid_field, field, encoded}}
-    end
-  end
-
-  @spec safe_binary_to_term(String.t(), binary()) :: {:ok, term()} | {:error, decode_error()}
-  defp safe_binary_to_term(field, binary) do
-    {:ok, :erlang.binary_to_term(binary, [:safe])}
-  rescue
-    # :safe rejects a payload naming atoms this node has never seen, and a
-    # corrupt binary raises too - both are facts about the row, returned
-    # as data rather than crashed on (this is the boundary, not a leaf).
-    ArgumentError -> {:error, {:invalid_field, field, binary}}
-  end
+  defp decode_term_field(args, field), do: OpaqueTerm.decode_field(args, field)
 
   # -- required scalar fields
 
