@@ -13,7 +13,16 @@ defmodule StatifierOban.Invoke.Handler do
         def config, do: MyApp.statifier_oban_config()
 
         @impl StatifierOban.Invoke.Handler
-        def run(invoke), do: {:ok, MyApp.Enrichment.lookup(invoke.params)}
+        def run(invoke) do
+          # `invoke.invoke_id` is the idempotency key upstream hands you:
+          # stable by construction across replays. Keying the write on it
+          # makes a re-run land on the prior attempt's row instead of
+          # creating a second enrichment.
+          with {:ok, enrichment} <-
+                 MyApp.Enrichments.upsert_by_invoke_id(invoke.invoke_id, invoke.params) do
+            {:ok, %{"enrichment_id" => enrichment.id}}
+          end
+        end
       end
 
   The division of labor follows st-ADR-0051 decision 4 exactly:
@@ -56,6 +65,33 @@ defmodule StatifierOban.Invoke.Handler do
   period, and the unique fields exclude `:queue` and the meta the
   delivery module rides on - a host moving its invoke queue or
   reconfiguring its delivery must not turn a replay into a second job.
+
+  ## At-least-once: the contract is upstream's
+
+  Jobs here are at-least-once, so a handler's work MUST be idempotent
+  on `invoke_id`. The contract's wording is statifier-ex's, not this
+  package's: read "At-least-once: handlers must be idempotent" in
+  statifier-ex's `docs/extending.md` - this module cites it rather than
+  restating it, because the seam that defines `perform/2` owns the
+  rulebook. What this base adds on top is only the enqueue-side dedup
+  described above ({scope, invoke_id} uniqueness). Everything `run/1`
+  does to the outside world is the implementor's to key, and
+  `invoke.invoke_id` is the key upstream hands you for exactly that,
+  as the example above demonstrates.
+
+  ## Open question: surfacing permanent failure into the chart
+
+  `{:error, reason}` from `run/1` (and a raise or exit out of it) maps
+  to an Oban **retry**, never a cancel: the work is idempotent on
+  `invoke_id` by contract, so retrying is what at-least-once means.
+  When retries are exhausted, Oban discards the job, and today nothing
+  is fed back into the run: the failure is observable on the job row
+  (`discarded` state, `{:run_failed, reason}` in the errors) and
+  nowhere else. Whether - and as what - a permanently failed invocation
+  should surface into the chart (an `error.*` event on the run, for
+  example) is **deliberately open**: the event vocabulary is
+  statifier-ex's call, so this package documents the gap rather than
+  deciding it.
 
   What this module deliberately does not do: interpret `run/1`'s
   donedata (`<finalize>` and namelist auto-assign are the session's, per
