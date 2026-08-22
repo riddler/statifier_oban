@@ -18,6 +18,7 @@ defmodule StatifierOban.Timer.KeyTest do
         macrostep: 1,
         microstep: 2,
         round: 0,
+        ordinal: 1,
         id_from_author?: false
       },
       overrides
@@ -32,7 +33,8 @@ defmodule StatifierOban.Timer.KeyTest do
         owner: {:transition, 4},
         macrostep: 7,
         microstep: 8,
-        round: 1
+        round: 1,
+        ordinal: 2
       },
       overrides
     )

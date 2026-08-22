@@ -4,13 +4,11 @@ defmodule StatifierOban.Timer.DedupKey do
   read off the stored `%Statifier.Effect.SendDelayed{}` (ADR-0054
   decision 3).
 
-  This is the seven-component form, and it tracks the statifier SHA `mix.lock`
-  pins rather than statifier-ex `main`. ADR-0059 has since amended ADR-0054
+  This is the seven-component form. ADR-0059 has since amended ADR-0054
   decision 3: `%SendDelayed{}` and `%Cancel{}` grew a per-execution `ordinal`,
   the documented dedup key gained it as an eighth component, and
   `{session scope, ordinal}` is blessed as a compact alternative. The pinned
-  dependency predates that field, so it cannot be read off the stored struct
-  here yet. Adding it is sob-7yx, which waits on the pin bump.
+  dependency now carries the field; adding it to this key is sob-7yx.
 
   Every component is a deterministic counter or a static content position,
   stamped as of scheduling rather than firing (ADR-0046), so re-executing

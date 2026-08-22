@@ -14,6 +14,9 @@ defmodule StatifierOban.EffectGenerators do
   @spec counter() :: StreamData.t(non_neg_integer())
   def counter, do: integer(0..20)
 
+  @spec ordinal() :: StreamData.t(pos_integer())
+  def ordinal, do: integer(1..20)
+
   @spec owner() :: StreamData.t(Statifier.Machine.Content.owner() | nil)
   def owner do
     one_of([
@@ -39,6 +42,7 @@ defmodule StatifierOban.EffectGenerators do
       macrostep: counter(),
       microstep: counter(),
       round: counter(),
+      ordinal: ordinal(),
       id_from_author?: boolean()
     })
     |> map(&struct!(SendDelayed, &1))
@@ -52,7 +56,8 @@ defmodule StatifierOban.EffectGenerators do
       owner: owner(),
       macrostep: counter(),
       microstep: counter(),
-      round: counter()
+      round: counter(),
+      ordinal: ordinal()
     })
     |> map(&struct!(Cancel, &1))
   end
