@@ -10,42 +10,59 @@ defmodule StatifierOban.Config do
   the call site, never a silent fallback into whatever instance happens to
   be running.
 
+  Queues are the host's for the same reason (ADR-0002 fixes instance
+  ownership and says each job kind's queue travels here as a further
+  field). `:timers_queue` names the host queue that delayed-send timer
+  jobs target; it is required with no default, so a job never falls back
+  silently into a host's `:default` queue.
+
   ## Examples
 
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :statifier_timers)
+      {:ok, %StatifierOban.Config{oban: MyApp.Oban, timers_queue: :statifier_timers}}
+
       iex> StatifierOban.Config.new(oban: MyApp.Oban)
-      {:ok, %StatifierOban.Config{oban: MyApp.Oban}}
+      {:error, {:missing_option, :timers_queue}}
 
       iex> StatifierOban.Config.new([])
       {:error, {:missing_option, :oban}}
 
-      iex> StatifierOban.Config.new(oban: MyApp.Oban, queue: :timers)
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, queue: :timers)
       {:error, {:unknown_options, [:queue]}}
   """
 
-  @enforce_keys [:oban]
-  defstruct [:oban]
+  @enforce_keys [:oban, :timers_queue]
+  defstruct [:oban, :timers_queue]
 
   @typedoc """
   The host-supplied Oban configuration.
 
   `:oban` is the name of the host's Oban instance, as given to
-  `Oban.start_link/1` - anything `t:Oban.name/0` allows.
+  `Oban.start_link/1` - anything `t:Oban.name/0` allows. `:timers_queue`
+  is the host queue delayed-send timer jobs are inserted into - an atom or
+  string, exactly as the host names it in its own Oban `:queues`.
   """
-  @type t :: %__MODULE__{oban: Oban.name()}
+  @type t :: %__MODULE__{
+          oban: Oban.name(),
+          timers_queue: atom() | String.t()
+        }
 
-  @known_options [:oban]
+  @known_options [:oban, :timers_queue]
 
   @doc """
   Builds a config from the host's options.
 
-  `:oban` is required. Unknown options are rejected rather than ignored, so
-  a typo fails loudly instead of silently dropping a setting.
+  `:oban` and `:timers_queue` are required. Unknown options are rejected
+  rather than ignored, so a typo fails loudly instead of silently dropping
+  a setting.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) when is_list(opts) do
     with :ok <- check_unknown(opts),
-         {:ok, oban} <- fetch_oban(opts) do
-      {:ok, %__MODULE__{oban: oban}}
+         {:ok, oban} <- fetch_required(opts, :oban),
+         {:ok, timers_queue} <- fetch_required(opts, :timers_queue),
+         :ok <- check_queue_name(:timers_queue, timers_queue) do
+      {:ok, %__MODULE__{oban: oban, timers_queue: timers_queue}}
     end
   end
 
@@ -56,11 +73,14 @@ defmodule StatifierOban.Config do
     end
   end
 
-  defp fetch_oban(opts) do
-    case Keyword.fetch(opts, :oban) do
-      {:ok, nil} -> {:error, {:missing_option, :oban}}
-      {:ok, oban} -> {:ok, oban}
-      :error -> {:error, {:missing_option, :oban}}
+  defp fetch_required(opts, key) do
+    case Keyword.fetch(opts, key) do
+      {:ok, nil} -> {:error, {:missing_option, key}}
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:missing_option, key}}
     end
   end
+
+  defp check_queue_name(_key, queue) when is_atom(queue) or is_binary(queue), do: :ok
+  defp check_queue_name(key, queue), do: {:error, {:invalid_option, key, queue}}
 end
