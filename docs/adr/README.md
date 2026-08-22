@@ -3,6 +3,7 @@
 | # | Decision | Status |
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | accepted |
+| [0002](0002-host-supplied-oban-instance.md) | Host-supplied Oban instance; SQLite-backed test harness | accepted |
 
 New ADRs: next number, same three-section format (Context, Decision,
 Consequences). Pick the number against a freshly fetched remote. A bare

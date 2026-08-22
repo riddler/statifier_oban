@@ -40,6 +40,7 @@ defmodule StatifierOban.MixProject do
       {:oban, "~> 2.23"},
 
       # Dev / test
+      {:ecto_sqlite3, "~> 0.24", only: :test},
       {:ex_quality, "~> 0.13", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
