@@ -20,10 +20,14 @@ follows the same practice.
 ## Decision
 
 This repository records architecture decisions the same way: numbered
-ADRs under `docs/adr/`, three-section format, indexed in
-`docs/adr/README.md`, next free number picked against a freshly fetched
-remote. A decision owned by another repository is adopted by reference in
-an ADR here, never restated in a way that could drift.
+ADRs under `docs/adr/`, three-section format, a Status line with the
+date it took effect, indexed in `docs/adr/README.md`, next free number
+picked against a freshly fetched remote. An accepted ADR is never
+rewritten: changing or extending a decision means a new ADR that
+supersedes or amends it, with the old ADR's Status line updated to
+point at its successor. A decision owned by another repository is
+adopted by reference in an ADR here, never restated in a way that
+could drift.
 
 ## Consequences
 
