@@ -16,6 +16,13 @@ defmodule StatifierOban.Config do
   jobs target; it is required with no default, so a job never falls back
   silently into a host's `:default` queue.
 
+  `:delivery` is the one option with a default, and the default is a
+  documented choice rather than a fallback: the run-liveness delivery
+  seam (`StatifierOban.Timer.Delivery`) defaults to the
+  `Statifier.Session`-backed check, which is correct for any host running
+  sessions with the session id as scope. A host answering liveness from
+  its own run store supplies its implementation here.
+
   ## Examples
 
       iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :statifier_timers)
@@ -29,10 +36,16 @@ defmodule StatifierOban.Config do
 
       iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, queue: :timers)
       {:error, {:unknown_options, [:queue]}}
+
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, delivery: MyApp.RunStore)
+      {:ok, %StatifierOban.Config{oban: MyApp.Oban, timers_queue: :t, delivery: MyApp.RunStore}}
+
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, delivery: "MyApp.RunStore")
+      {:error, {:invalid_option, :delivery, "MyApp.RunStore"}}
   """
 
   @enforce_keys [:oban, :timers_queue]
-  defstruct [:oban, :timers_queue]
+  defstruct [:oban, :timers_queue, delivery: StatifierOban.Timer.Delivery.Session]
 
   @typedoc """
   The host-supplied Oban configuration.
@@ -41,28 +54,45 @@ defmodule StatifierOban.Config do
   `Oban.start_link/1` - anything `t:Oban.name/0` allows. `:timers_queue`
   is the host queue delayed-send timer jobs are inserted into - an atom or
   string, exactly as the host names it in its own Oban `:queues`.
+  `:delivery` is the module implementing `StatifierOban.Timer.Delivery`
+  that fired timer jobs go through.
   """
   @type t :: %__MODULE__{
           oban: Oban.name(),
-          timers_queue: atom() | String.t()
+          timers_queue: atom() | String.t(),
+          delivery: module()
         }
 
-  @known_options [:oban, :timers_queue]
+  @known_options [:oban, :timers_queue, :delivery]
+  @default_delivery StatifierOban.Timer.Delivery.Session
 
   @doc """
   Builds a config from the host's options.
 
-  `:oban` and `:timers_queue` are required. Unknown options are rejected
-  rather than ignored, so a typo fails loudly instead of silently dropping
-  a setting.
+  `:oban` and `:timers_queue` are required; `:delivery` is optional and
+  defaults to `StatifierOban.Timer.Delivery.Session`. Unknown options are
+  rejected rather than ignored, so a typo fails loudly instead of
+  silently dropping a setting.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) when is_list(opts) do
     with :ok <- check_unknown(opts),
          {:ok, oban} <- fetch_required(opts, :oban),
          {:ok, timers_queue} <- fetch_required(opts, :timers_queue),
-         :ok <- check_queue_name(:timers_queue, timers_queue) do
-      {:ok, %__MODULE__{oban: oban, timers_queue: timers_queue}}
+         :ok <- check_queue_name(:timers_queue, timers_queue),
+         {:ok, delivery} <- fetch_delivery(opts) do
+      {:ok, %__MODULE__{oban: oban, timers_queue: timers_queue, delivery: delivery}}
+    end
+  end
+
+  @spec fetch_delivery(keyword()) :: {:ok, module()} | {:error, term()}
+  defp fetch_delivery(opts) do
+    case Keyword.get(opts, :delivery, @default_delivery) do
+      delivery when is_atom(delivery) and not is_nil(delivery) and not is_boolean(delivery) ->
+        {:ok, delivery}
+
+      other ->
+        {:error, {:invalid_option, :delivery, other}}
     end
   end
 

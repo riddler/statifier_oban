@@ -15,15 +15,28 @@ defmodule StatifierOban.Timer.Worker do
   must still swallow a replayed insert, because the replay is the same
   scheduling decision, not a new one. The unique fields exclude `:queue`
   on purpose - a host moving its timers queue must not turn a replay into
-  a second job.
+  a second job - and exclude the meta the delivery module rides on, so a
+  host reconfiguring its delivery does not turn a replay into a second
+  job either.
 
-  `perform/1` decodes the stored effect and stops there, cancelling with
-  `:delivery_not_implemented`: delivery is sob-2hx.5's scope, which owes
-  the run-liveness check st-ADR-0054 decision 4 requires before any fired
-  event is fed back. It bolts on here, replacing that one return with the
-  checked delivery; the decode half stays as it is. An undecodable row
-  cancels rather than retries - no number of retries makes a corrupt row
-  decodable.
+  `perform/1` decodes the stored effect and hands it to the job's
+  `StatifierOban.Timer.Delivery` module (from the meta written at
+  schedule time; absent meta falls back to the documented default,
+  `StatifierOban.Timer.Delivery.Session`), which owes the run-liveness
+  check st-ADR-0054 decision 4 requires before any fired event is fed
+  back. The outcomes map onto Oban states so each is observable on the
+  job row:
+
+  - delivered -> the job completes (`:ok`);
+  - the run is not live -> the job cancels with
+    `{:discarded, reason}` recorded, the spec 6.2 discard as data;
+  - an undecodable row cancels with `{:undecodable, reason}` - no number
+    of retries makes a corrupt row decodable;
+  - a delivery module that cannot be resolved returns
+    `{:error, {:invalid_delivery, _}}` and retries - an environment fact
+    about the host's code, fixable by a deploy, unlike the row facts
+    above. A raise or exit out of the delivery module retries the same
+    way, per the behaviour's contract.
   """
 
   use Oban.Worker,
@@ -36,11 +49,54 @@ defmodule StatifierOban.Timer.Worker do
 
   alias StatifierOban.Timer.JobArgs
 
+  @default_delivery StatifierOban.Timer.Delivery.Session
+
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: args, meta: meta}) do
+    with {:ok, scope, effect} <- decode(args),
+         {:ok, delivery} <- delivery_module(meta) do
+      case delivery.deliver(scope, effect) do
+        :delivered -> :ok
+        {:discarded, reason} -> {:cancel, {:discarded, reason}}
+      end
+    end
+  end
+
+  @spec decode(JobArgs.args()) ::
+          {:ok, String.t(), Statifier.Effect.SendDelayed.t()} | {:cancel, term()}
+  defp decode(args) do
     case JobArgs.to_effect(args) do
-      {:ok, _scope, _effect} -> {:cancel, :delivery_not_implemented}
+      {:ok, scope, effect} -> {:ok, scope, effect}
       {:error, reason} -> {:cancel, {:undecodable, reason}}
     end
+  end
+
+  # The meta value is a module name written by `Timer.schedule/3` from a
+  # validated `Config`, so resolution failures are deploy-shaped: the
+  # module was renamed or removed after the job was stored. `:error` (not
+  # `:cancel`) keeps the timer alive across the host fixing that.
+  @spec delivery_module(map()) :: {:ok, module()} | {:error, {:invalid_delivery, term()}}
+  defp delivery_module(meta) do
+    case Map.get(meta, "delivery") do
+      nil -> {:ok, @default_delivery}
+      name when is_binary(name) -> resolve_delivery(name)
+      other -> {:error, {:invalid_delivery, other}}
+    end
+  end
+
+  @spec resolve_delivery(String.t()) :: {:ok, module()} | {:error, {:invalid_delivery, term()}}
+  defp resolve_delivery(name) do
+    module = String.to_existing_atom(name)
+
+    if Code.ensure_loaded?(module) and function_exported?(module, :deliver, 2) do
+      {:ok, module}
+    else
+      {:error, {:invalid_delivery, name}}
+    end
+  rescue
+    # `String.to_existing_atom/1` on a module this node has never seen -
+    # a fact about the deployed code, returned as data at this boundary
+    # so Oban retries it as the environment error it is.
+    ArgumentError -> {:error, {:invalid_delivery, name}}
   end
 end
