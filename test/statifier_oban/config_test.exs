@@ -54,4 +54,28 @@ defmodule StatifierOban.ConfigTest do
     assert {:error, {:unknown_options, [:quue, :extra]}} =
              Config.new(oban: MyHost.Oban, timers_queue: :t, quue: :timers, extra: 1)
   end
+
+  # sabotage: fetch_delivery's default swapped to MyHost.RunStore - went
+  # red (the documented default stopped holding), reverted.
+  test "new/1 defaults :delivery to the Session-backed liveness check" do
+    assert {:ok, %Config{delivery: StatifierOban.Timer.Delivery.Session}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t)
+  end
+
+  # sabotage: fetch_delivery ignored the option for the default - went red
+  # (the host's module was dropped), reverted.
+  test "new/1 carries the host's own delivery module" do
+    assert {:ok, %Config{delivery: MyHost.RunStore}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, delivery: MyHost.RunStore)
+  end
+
+  # sabotage: fetch_delivery's guard was widened to any term - went red
+  # (nil and a binary both built configs), reverted.
+  test "new/1 rejects a :delivery that is not a module" do
+    assert {:error, {:invalid_option, :delivery, nil}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, delivery: nil)
+
+    assert {:error, {:invalid_option, :delivery, false}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, delivery: false)
+  end
 end

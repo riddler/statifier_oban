@@ -12,6 +12,11 @@ defmodule StatifierOban.TimerTest do
   @oban_name StatifierOban.TimerTestOban
 
   setup context do
+    # The session runtime backs the default delivery's liveness check: a
+    # fired job here has no session under its scope, so it discards
+    # rather than erroring on a missing registry.
+    start_supervised!(Statifier.Supervisor)
+
     start_supervised!(
       {Oban, name: @oban_name, repo: TestRepo, engine: Oban.Engines.Lite, testing: :manual}
     )
@@ -132,9 +137,11 @@ defmodule StatifierOban.TimerTest do
     assert {:ok, ^scope_a, ^effect} = JobArgs.to_effect(args)
   end
 
-  # sabotage: Worker.perform/1 success clause returned :ok - went red
-  # (drain reported success: 1, cancelled: 0), reverted.
-  test "a fired job cancels awaiting sob-2hx.5's delivery; replay stays a no-op",
+  # sabotage: Worker.perform/1's {:discarded, _} clause returned :ok -
+  # went red (drain reported success: 1, cancelled: 0), reverted.
+  # No session runs under this scope, so the fired job discards through
+  # the run-liveness check (delivery itself is WorkerTest's ground).
+  test "a fired job with no live run discards; replay stays a no-op",
        %{config: config, queue: queue, scope_a: scope_a} do
     effect = %{send_delayed_fixture() | delay_ms: 0}
 
@@ -207,8 +214,9 @@ defmodule StatifierOban.TimerTest do
 
     assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope_a, effect)
 
-    # The job executes (today it self-cancels awaiting sob-2hx.5's
-    # delivery); either way it is in a terminal state when the cancel lands.
+    # The job executes (discarding through the run-liveness check, since
+    # no session runs under this scope); either way it is in a terminal
+    # state when the cancel lands.
     assert %{cancelled: 1} = Oban.drain_queue(@oban_name, queue: queue, with_scheduled: true)
     %Oban.Job{state: terminal_state} = TestRepo.get!(Oban.Job, id)
 

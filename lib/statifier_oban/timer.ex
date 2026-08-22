@@ -7,8 +7,10 @@ defmodule StatifierOban.Timer do
   in statifier-ex's `docs/durable-timers.md`: the host reads the effect off
   a live session's subscriber stream (or a direct interpreter drive) and
   hands it here with the session scope and its `StatifierOban.Config`.
-  Delivery of the fired event, behind the mandatory run-liveness check, is
-  sob-2hx.5.
+  When the job fires, `StatifierOban.Timer.Worker` feeds the event back
+  through the config's `StatifierOban.Timer.Delivery` module, behind the
+  mandatory run-liveness check (st-ADR-0054 decision 4) - the delivery
+  module travels on the job's meta, so it is fixed at schedule time.
 
   Two contract rules from statifier-ex are enforced at this door:
 
@@ -44,7 +46,11 @@ defmodule StatifierOban.Timer do
   Inserting the same scope and effect again returns `{:ok, job}` with
   `job.conflict?` set and leaves exactly one stored job: the at-least-once
   no-op the dedup key exists for. The job is inserted into the host's
-  `:timers_queue`, scheduled at now plus `delay_ms`.
+  `:timers_queue`, scheduled at now plus `delay_ms`, carrying the
+  config's delivery module in its meta - meta is not part of the unique
+  fields, so a replay under a reconfigured delivery still conflicts with
+  the stored job (same scheduling decision) rather than inserting a
+  second one.
   """
   @spec schedule(Config.t(), Key.scope(), SendDelayed.t()) ::
           {:ok, Oban.Job.t()} | {:error, schedule_error()}
@@ -55,7 +61,11 @@ defmodule StatifierOban.Timer do
       changeset =
         scope
         |> JobArgs.from_effect(effect)
-        |> Worker.new(queue: config.timers_queue, scheduled_at: scheduled_at)
+        |> Worker.new(
+          queue: config.timers_queue,
+          scheduled_at: scheduled_at,
+          meta: %{"delivery" => Atom.to_string(config.delivery)}
+        )
 
       Oban.insert(config.oban, changeset)
     end
