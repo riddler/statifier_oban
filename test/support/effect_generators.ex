@@ -34,7 +34,14 @@ defmodule StatifierOban.EffectGenerators do
       event: string(:alphanumeric, min_length: 1, max_length: 8),
       target: constant(nil),
       type: constant(nil),
-      data: one_of([constant(nil), string(:alphanumeric, max_length: 8), integer(0..100)]),
+      data:
+        one_of([
+          constant(nil),
+          string(:alphanumeric, max_length: 8),
+          integer(0..100),
+          # a non-JSON term, so args round-trips exercise the opaque encoding
+          tuple({constant(:host_term), integer(0..100)})
+        ]),
       send_id: send_id(),
       delay_ms: integer(0..86_400_000),
       c_index: one_of([counter(), constant(nil)]),
@@ -43,7 +50,14 @@ defmodule StatifierOban.EffectGenerators do
       microstep: counter(),
       round: counter(),
       ordinal: ordinal(),
-      id_from_author?: boolean()
+      id_from_author?: boolean(),
+      caller_context:
+        one_of([
+          constant(nil),
+          # opaque host terms (st-ADR-0063): carried as row data, never keyed
+          tuple({constant(:trace), string(:alphanumeric, max_length: 8)}),
+          map_of(string(:alphanumeric, min_length: 1, max_length: 4), integer(), max_length: 3)
+        ])
     })
     |> map(&struct!(SendDelayed, &1))
   end
