@@ -125,12 +125,15 @@ Two recorded limits shape what this package can promise:
   contract covers delayed sends that resolve to the session itself. A send
   routed to `#_internal`, `#_parent`, `#_invokeid`, or an external session is
   left to the library, because the resolved route does not travel on the effect.
-- The dedup key is `{session scope, send_id, macrostep, microstep, round,
-  c_index, owner}`. A `<foreach>` body re-executes the same static `c_index`
-  list every iteration, so a hand-written `id` on a `<send delay="...">` inside
-  one collides on every field of the key. Leave the `id` off: a library-
-  generated id advances `send_counter` per execution and the key is unique
-  again.
+- The dedup key stored here is the compact `{session scope, ordinal}` pair
+  ADR-0059 (statifier-ex) decision 3 blesses: `ordinal` is a per-execution
+  counter on `%SendDelayed{}` and `%Cancel{}`, session-global and monotone,
+  so the pair is unique on its own. The remaining components of the
+  documented compound key (`send_id`, `macrostep`, `microstep`, `round`,
+  `c_index`, `owner`) are row data on the stored effect, not key components.
+  The cancellation key stays `{session scope, send_id}` - spec 6.3 cancels
+  every timer under a sendid - and a hand-written `id` on a
+  `<send delay="...">` inside a `<foreach>` is fully supported.
 
 Scoping is mandatory in any stored key: Statifier's `send_counter` restarts at 0
 per chart run, so a bare `send_id` is unique only within a run.

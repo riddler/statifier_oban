@@ -1,34 +1,31 @@
 defmodule StatifierOban.Timer.DedupKey do
   @moduledoc """
-  `{session scope, send_id, macrostep, microstep, round, c_index, owner}` -
-  read off the stored `%Statifier.Effect.SendDelayed{}` (ADR-0054
-  decision 3).
+  `{session scope, ordinal}` - the compact dedup key ADR-0059 decision 3
+  blesses, read off the stored `%Statifier.Effect.SendDelayed{}`.
 
-  This is the seven-component form. ADR-0059 has since amended ADR-0054
-  decision 3: `%SendDelayed{}` and `%Cancel{}` grew a per-execution `ordinal`,
-  the documented dedup key gained it as an eighth component, and
-  `{session scope, ordinal}` is blessed as a compact alternative. The pinned
-  dependency now carries the field; adding it to this key is sob-7yx.
+  ADR-0059 amended ADR-0054 decision 3: `%SendDelayed{}` and `%Cancel{}`
+  carry a per-execution `ordinal` minted from a session-global, monotone
+  counter, so `{session scope, ordinal}` is unique on its own. This package
+  stores that pair as the key; the remaining components of the documented
+  compound form - `send_id`, `macrostep`, `microstep`, `round`, `c_index`,
+  `owner` - stay row data on the stored effect rather than key components.
+  Both forms are conformant; the compound form remains upstream's documented
+  default because it is self-describing in a store, and this package keeps
+  that self-description by storing the effect itself alongside the key.
 
-  Every component is a deterministic counter or a static content position,
-  stamped as of scheduling rather than firing (ADR-0046), so re-executing
-  the same drive after a crash rebuilds a byte-identical key. `c_index` and
-  `owner` are mandatory members, not decoration: without them two
-  `<send id="x" delay="...">` in one `<onentry>` collapse into one row.
+  Both components are deterministic as of scheduling rather than firing:
+  the ordinal is pure fold state (ADR-0059 decision 2), so re-executing the
+  same drive after a crash rebuilds a byte-identical key. Cancellation never
+  addresses this key - spec 6.3 cancels every timer under a sendid, and
+  `send_id` is row data here, so a cancel matches rows via
+  `StatifierOban.Timer.Key.cancels?/3`.
   """
 
-  alias Statifier.Machine.Content
-
-  @enforce_keys [:scope, :send_id, :macrostep, :microstep, :round, :c_index, :owner]
-  defstruct [:scope, :send_id, :macrostep, :microstep, :round, :c_index, :owner]
+  @enforce_keys [:scope, :ordinal]
+  defstruct [:scope, :ordinal]
 
   @type t :: %__MODULE__{
           scope: String.t(),
-          send_id: String.t(),
-          macrostep: non_neg_integer(),
-          microstep: non_neg_integer(),
-          round: non_neg_integer(),
-          c_index: non_neg_integer() | nil,
-          owner: Content.owner() | nil
+          ordinal: pos_integer()
         }
 end
