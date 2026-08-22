@@ -7,7 +7,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
   alias Statifier.Effect.SendDelayed
   alias StatifierOban.Timer.Key
 
-  # Sabotage: changed `build_cancellation_key/2` to append
+  # sabotage: changed `build_cancellation_key/2` to append
   # `:erlang.unique_integer()` to `send_id` before building the key - both
   # properties went red (two derivations of the same input stopped
   # matching), reverted. Verified for real.
@@ -26,7 +26,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Sabotage: changed the `validated_scope/1` success clause to return
+  # sabotage: changed the `validated_scope/1` success clause to return
   # `{:ok, "fixed"}` instead of `{:ok, scope}` - property went red (two
   # distinct scopes produced equal dedup keys), reverted. Verified for real.
   describe "scope separates runs" do
@@ -43,7 +43,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Sabotage: changed `c_index: send_delayed.c_index` to `c_index: 0`
+  # sabotage: changed `c_index: send_delayed.c_index` to `c_index: 0`
   # (hardcoded) in the `%DedupKey{}` build in `Key.dedup_key/2` - the
   # c_index-only-diff property went red (two effects differing only in
   # c_index produced equal keys), reverted. Verified for real.
@@ -62,6 +62,8 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
       end
     end
 
+    # sabotage: hardcoded `c_index: nil` in `dedup_key/2`'s `%DedupKey{}`
+    # build - property went red, reverted.
     property "two sends sharing every component but c_index produce distinct dedup keys" do
       check all(
               scope <- scope(),
@@ -77,6 +79,8 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
       end
     end
 
+    # sabotage: hardcoded `owner: nil` in `dedup_key/2`'s `%DedupKey{}`
+    # build - property went red, reverted.
     property "two sends sharing every component but owner produce distinct dedup keys" do
       check all(
               scope <- scope(),
@@ -93,7 +97,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Sabotage: changed `cancellation_key/2`'s `SendDelayed` clause to fold
+  # sabotage: changed `cancellation_key/2`'s `SendDelayed` clause to fold
   # `c_index` into the `send_id` passed to `build_cancellation_key/2`
   # (`"#{send_id}-#{c_index}"`) - the property went red (two effects
   # sharing scope/send_id but differing c_index stopped sharing a
@@ -122,7 +126,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Sabotage: changed `cancellation_key/2`'s `Cancel` clause to read
+  # sabotage: changed `cancellation_key/2`'s `Cancel` clause to read
   # `send_id <> "!"` instead of `send_id` (mirroring the example test's own
   # sabotage on the `SendDelayed` clause) - the property went red (a
   # SendDelayed and a Cancel sharing a send_id stopped producing equal
@@ -142,7 +146,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Sabotage: changed `validated_scope/1`'s fallback clause to
+  # sabotage: changed `validated_scope/1`'s fallback clause to
   # `defp validated_scope(_scope), do: {:ok, "default"}` - both properties
   # went red (nil/"" and non-binary scopes stopped erroring), reverted.
   # Verified for real.
@@ -164,26 +168,45 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # Residual collision, stated honestly (ADR-0054): an author-written `id`
-  # on a `<send delay="...">` inside a `<foreach>` body is reused verbatim
-  # across iterations, so replaying the same static c_index/owner/microstep
-  # with the same author id collapses to one dedup key. The documented
-  # workaround is to omit the hand-written `id` so a library-generated id
-  # advances `send_counter` per execution and the key stays unique.
+  # Residual collision, characterized deliberately - this is a statement of a
+  # known limitation, NOT an assertion that collisions are acceptable.
   #
-  # Sabotage: changed `dedup_key/2`'s `%DedupKey{}` build to store
+  # An author-written `id` on a `<send delay="...">` inside a `<foreach>` body
+  # is reused verbatim across iterations, and `<foreach>` re-executes the same
+  # static c_index/owner list every iteration in one microstep. Two genuinely
+  # distinct timers therefore agree on all seven components and a durable
+  # store dedups them down to one - the library keeps them as two, so a timer
+  # the chart expects silently never fires.
+  #
+  # ADR-0054 recorded the author-side workaround (omit the hand-written `id`).
+  # ADR-0059 has since RETIRED that workaround upstream by adding a
+  # per-execution `ordinal` to both effect structs; the eight-component key is
+  # per-instance and a hand-written id inside a `<foreach>` is fully
+  # supported. What follows describes the statifier SHA `mix.lock` pins, which
+  # predates that field - not the current upstream contract. When the pin is
+  # bumped (sob-7yx), this whole block should go red and be replaced by a
+  # property asserting the two iterations produce DIFFERENT keys.
+  #
+  # sabotage: changed `dedup_key/2`'s `%DedupKey{}` build to store
   # `send_id <> Integer.to_string(System.unique_integer())` instead of
   # `send_id` - the same-struct-replayed property went red (two
   # derivations of one struct stopped matching), reverted. Verified for
   # real.
   describe "<foreach> residual, characterized" do
-    property "replaying the same author-id SendDelayed struct yields identical dedup keys" do
+    property "two distinct foreach iterations collide on the seven-component key" do
       check all(scope <- scope(), effect <- send_delayed()) do
-        author_effect = %{effect | id_from_author?: true}
-        assert Key.dedup_key(scope, author_effect) == Key.dedup_key(scope, author_effect)
+        # Two separately built structs standing for two iterations of one
+        # `<foreach>` body: same author id, same content position, same
+        # microstep - distinct timers the library keeps as two.
+        iteration_1 = %{effect | id_from_author?: true}
+        iteration_2 = %{effect | id_from_author?: true}
+
+        assert Key.dedup_key(scope, iteration_1) == Key.dedup_key(scope, iteration_2)
       end
     end
 
+    # sabotage: hardcoded `send_id: "fixed"` in `dedup_key/2`'s
+    # `%DedupKey{}` build - property went red, reverted.
     property "the same effect with distinct generated ids yields distinct dedup keys" do
       check all(
               scope <- scope(),
