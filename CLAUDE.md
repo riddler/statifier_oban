@@ -138,12 +138,50 @@ per chart run, so a bare `send_id` is unique only within a run.
 ## Build & Test
 
 ```bash
-mix test      # the suite
-mix format    # no quality gate is wired up yet
+mix quality                  # full gate: format, compile, credo, dialyzer,
+                             # deps audit, full suite with coverage
+mix quality --profile loop   # inner loop: format, compile, credo, changed tests
+mix test                     # the suite
 ```
 
-There is no `mix quality` gate here yet. statifier-ex runs ExQuality; adopting
-it (or anything else) is an open decision, not an assumed one.
+Full `mix quality` must be green before any commit. The gate formats your
+code - do not run `mix format` as a separate step.
+
+Set `STATIFIER_PATH` to a local statifier-ex checkout when co-developing a
+change that spans both repos; otherwise the git pin in `mix.lock` governs.
+
+<!-- usage-rules-start -->
+## ExQuality (`mix quality`)
+
+Full reference: `deps/ex_quality/usage-rules.md`. Read it when a stage fails in a
+way its own output does not explain, or when you need the JSON report shape.
+
+The rules that do not wait to be looked up:
+
+- **Never truncate the output.** No `| tail`, `| head`, `| grep`. A passing stage
+  costs one line and detail prints only for failures, so truncating removes
+  findings, not noise.
+- **Read the `○` lines.** A skipped stage is not a passing one, and the reason
+  says whether the gap is in this run or in what the project checks at all.
+- **A scoped or `--quick` green is not a full green.** Neither measures coverage.
+  Run a bare `mix quality` before reporting work complete.
+- **Never go green by weakening the check.** Not by lowering a coverage or
+  security threshold, not by `--skip` flags or `enabled: false`, not by
+  `@tag :skip` on a failing test, not by narrowing scope. If a finding is
+  genuinely wrong for this project, say so and let the user decide.
+<!-- usage-rules-end -->
+
+### This repo's own gate rules
+
+- The full gate is `mix quality`; the inner loop is
+  `mix quality --profile loop`. Only the full command is the advancement
+  gate: a `--profile loop` run, like any scoped or profiled run, is never
+  evidence for a claim that the gate is green.
+- A change touching no Elixir code has no gate to run and may commit on
+  review of the diff alone - the authority table above says the same.
+- This gate is deliberately smaller than statifier-ex's, and `.quality.exs`
+  records that decision. Documentation may point at the gate; it never
+  enlarges it.
 
 ## Conventions
 
