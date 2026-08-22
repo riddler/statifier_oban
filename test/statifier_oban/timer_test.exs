@@ -5,7 +5,7 @@ defmodule StatifierOban.TimerTest do
 
   import Ecto.Query, only: [from: 2]
 
-  alias Statifier.Effect.SendDelayed
+  alias Statifier.Effect.{Cancel, SendDelayed}
   alias StatifierOban.{Config, TestRepo, Timer}
   alias StatifierOban.Timer.JobArgs
 
@@ -148,6 +148,86 @@ defmodule StatifierOban.TimerTest do
     # job state over an infinite period.
     assert {:ok, %Oban.Job{id: ^id, conflict?: true}} = Timer.schedule(config, scope_a, effect)
     assert job_count(queue) == 1
+  end
+
+  # sabotage: dropped the send_id where clause from timer_jobs - went red
+  # (the other send_id's job got cancelled too), reverted.
+  test "one cancel cancels every job under its send_id, and only those",
+       %{config: config, scope_a: scope_a} do
+    effect = send_delayed_fixture()
+    twin = %{effect | ordinal: effect.ordinal + 1}
+    other = %{effect | send_id: "send_2", ordinal: effect.ordinal + 2}
+
+    assert {:ok, %Oban.Job{id: id_a}} = Timer.schedule(config, scope_a, effect)
+    assert {:ok, %Oban.Job{id: id_b}} = Timer.schedule(config, scope_a, twin)
+    assert {:ok, %Oban.Job{id: id_c}} = Timer.schedule(config, scope_a, other)
+
+    assert {:ok, 2} = Timer.cancel(config, scope_a, cancel_fixture())
+
+    assert %Oban.Job{state: "cancelled"} = TestRepo.get!(Oban.Job, id_a)
+    assert %Oban.Job{state: "cancelled"} = TestRepo.get!(Oban.Job, id_b)
+    assert %Oban.Job{state: "scheduled"} = TestRepo.get!(Oban.Job, id_c)
+  end
+
+  # sabotage: cancel/3 hardcoded {:ok, 1} over the engine's count - went
+  # red here (and in the racing test below), reverted.
+  test "a cancel matching nothing is a no-op, not an error",
+       %{config: config, scope_a: scope_a} do
+    assert {:ok, 0} = Timer.cancel(config, scope_a, cancel_fixture())
+  end
+
+  # sabotage: the scope where clause was dropped from timer_jobs - went red
+  # (scope_b's job got cancelled by scope_a's cancel), reverted.
+  test "a cancel is scoped: the twin under another scope survives",
+       %{config: config, scope_a: scope_a, scope_b: scope_b} do
+    effect = send_delayed_fixture()
+
+    assert {:ok, %Oban.Job{id: id_a}} = Timer.schedule(config, scope_a, effect)
+    assert {:ok, %Oban.Job{id: id_b}} = Timer.schedule(config, scope_b, effect)
+
+    assert {:ok, 1} = Timer.cancel(config, scope_a, cancel_fixture())
+
+    assert %Oban.Job{state: "cancelled"} = TestRepo.get!(Oban.Job, id_a)
+    assert %Oban.Job{state: "scheduled"} = TestRepo.get!(Oban.Job, id_b)
+  end
+
+  # sabotage: cancel/3 skipped Key.cancellation_key and built the key
+  # struct directly - went red (the empty scope returned {:ok, 0} instead
+  # of the typed error), reverted.
+  test "an invalid scope is the key's typed error", %{config: config} do
+    assert {:error, :invalid_scope} = Timer.cancel(config, "", cancel_fixture())
+  end
+
+  # sabotage: covered by the hardcoded-{:ok, 1} mutation above - went red
+  # here too, reverted. The terminal-state exclusion itself is Oban's
+  # engine, exercised through cancel/3's {:ok, 0} and the unchanged row.
+  test "a cancel racing execution: an already-run job stays run",
+       %{config: config, queue: queue, scope_a: scope_a} do
+    effect = %{send_delayed_fixture() | delay_ms: 0}
+
+    assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope_a, effect)
+
+    # The job executes (today it self-cancels awaiting sob-2hx.5's
+    # delivery); either way it is in a terminal state when the cancel lands.
+    assert %{cancelled: 1} = Oban.drain_queue(@oban_name, queue: queue, with_scheduled: true)
+    %Oban.Job{state: terminal_state} = TestRepo.get!(Oban.Job, id)
+
+    # The late cancel matches nothing: terminal states are past cancelling.
+    assert {:ok, 0} = Timer.cancel(config, scope_a, cancel_fixture())
+    assert %Oban.Job{state: ^terminal_state} = TestRepo.get!(Oban.Job, id)
+  end
+
+  defp cancel_fixture do
+    %Cancel{
+      send_id: "send_1",
+      c_index: 1,
+      owner: {:onexit, 0, 0},
+      macrostep: 2,
+      microstep: 0,
+      round: 1,
+      ordinal: 5,
+      caller_context: nil
+    }
   end
 
   defp job_count(queue) do
