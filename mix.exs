@@ -74,7 +74,7 @@ defmodule StatifierOban.MixProject do
   defp deps do
     [
       statifier_dep(),
-      {:oban, "~> 2.23"},
+      {:oban, "~> 2.19"},
 
       # Dev / test
       {:ecto_sqlite3, "~> 0.24", only: :test},
