@@ -10,6 +10,12 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.1.1] 2026-08-23
+
+### Changed
+
+- Relaxed oban dependency to 2.19
+
 ## [0.1.0] 2026-08-22
 
 First release: durable timers and async invoke execution for the
