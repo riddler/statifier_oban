@@ -35,11 +35,12 @@ defmodule StatifierOban.Invoke.Handler do
     job that has not run yet has nowhere to receive an event.
   - **The injected `perform/2` is the impure half**: for a start it
     inserts one `StatifierOban.Invoke.Worker` job, unique on
-    `{scope, invoke_id}`, into the config's `:invoke_queue` on the
-    config's Oban instance; for a cancel it cancels every stored job
-    under that pair. Both are idempotent on `invoke_id` by construction:
-    the unique key makes a replayed insert conflict with the stored job
-    (the same scheduling decision, not a new one), and a replayed cancel
+    `{scope, invoke_id, macrostep}` (ADR-0003), into the config's
+    `:invoke_queue` on the config's Oban instance; for a cancel it
+    cancels every stored job under `{scope, invoke_id}`, whatever its
+    macrostep. Both are idempotent by construction: the unique key makes
+    a replayed insert conflict with the stored job (the same scheduling
+    decision, not a new one), and a replayed cancel
     matches only jobs still in a non-terminal state. That uniqueness is
     what this module enforces; what your `run/1` does with the outside
     world is yours to make idempotent the same way.
@@ -56,15 +57,21 @@ defmodule StatifierOban.Invoke.Handler do
   `perform/2` with `{:error, {:missing_option, :invoke_queue}}` rather
   than falling back into any host queue.
 
-  The uniqueness key is `{scope, invoke_id}` for the same reason the
-  timer jobs key on `{scope, ordinal}`: `invoke_id` is a deterministic
-  `%MachineState{}` counter (st-ADR-0008 as amended), byte-identical when
-  a crashed host re-runs the same drive, and it restarts per chart run,
-  so the scope (`ctx.session_id`, or the host's own durable run id) keeps
-  unrelated runs apart. The unique window is every state over an infinite
-  period, and the unique fields exclude `:queue` and the meta the
-  delivery module rides on - a host moving its invoke queue or
-  reconfiguring its delivery must not turn a replay into a second job.
+  The uniqueness key is `{scope, invoke_id, macrostep}` (ADR-0003) for
+  the same reason the timer jobs key on `{scope, ordinal}`: every
+  component is deterministic as of scheduling, byte-identical when a
+  crashed host re-runs the same drive. `invoke_id` is either the
+  author's literal id, used verbatim, or a deterministic
+  `%MachineState{}` counter (st-ADR-0008 as amended); it restarts per
+  chart run, so the scope (`ctx.session_id`, or the host's own durable
+  run id) keeps unrelated runs apart. `macrostep` is what tells a
+  replay from a re-entry: an authored id is byte-identical on every
+  re-entry of its state, and only the macrostep separates that fresh
+  scheduling decision from a redelivery of the old one. The unique
+  window is every state over an infinite period, and the unique fields
+  exclude `:queue` and the meta the delivery module rides on - a host
+  moving its invoke queue or reconfiguring its delivery must not turn a
+  replay into a second job.
 
   ## At-least-once: the contract is upstream's
 
@@ -74,7 +81,8 @@ defmodule StatifierOban.Invoke.Handler do
   statifier-ex's `docs/extending.md` - this module cites it rather than
   restating it, because the seam that defines `perform/2` owns the
   rulebook. What this base adds on top is only the enqueue-side dedup
-  described above ({scope, invoke_id} uniqueness). Everything `run/1`
+  described above ({scope, invoke_id, macrostep} uniqueness).
+  Everything `run/1`
   does to the outside world is the implementor's to key, and
   `invoke.invoke_id` is the key upstream hands you for exactly that,
   as the example above demonstrates.
@@ -178,10 +186,12 @@ defmodule StatifierOban.Invoke.Handler do
   @doc """
   Inserts the one Oban job that runs `handler.run/1` for `invoke`.
 
-  Unique on `{scope, invoke_id}` over every state and an infinite
-  period, so performing the same instruction again - the at-least-once
-  replay st-ADR-0051 decision 4 says MAY happen - conflicts with the
-  stored job and inserts nothing. The job lands in the config's
+  Unique on `{scope, invoke_id, macrostep}` over every state and an
+  infinite period, so performing the same instruction again - the
+  at-least-once replay st-ADR-0051 decision 4 says MAY happen -
+  conflicts with the stored job and inserts nothing, while a re-entered
+  state's fresh invocation (same authored id, later macrostep) inserts
+  a fresh job (ADR-0003). The job lands in the config's
   `:invoke_queue` and carries the config's `:invoke_delivery` module in
   its meta; meta is not part of the unique fields, so a replay under a
   reconfigured delivery still conflicts with the stored job.
@@ -210,7 +220,8 @@ defmodule StatifierOban.Invoke.Handler do
 
   @doc """
   Cancels every stored invoke job under `{scope, invoke_id}` on the
-  handler's configured instance.
+  handler's configured instance - every generation, whatever macrostep
+  each job was keyed under (ADR-0003).
 
   6.4.3's cancellation for a job-shaped invocation: a job that has not
   run yet is cancelled and never runs; a job that already reached a

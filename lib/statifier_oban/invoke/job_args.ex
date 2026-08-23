@@ -10,13 +10,16 @@ defmodule StatifierOban.Invoke.JobArgs do
   effect:
 
   - Every deterministic field rides as an explicit JSON value: the dedup
-    pair (`scope`, `invoke_id`) at the top level - Oban's uniqueness
-    `keys` read args at the top level - and the effect's position row
-    data (`state_index`, `invoke_index`, `macrostep`, `microstep`,
-    `round`) beside it, self-describing in the store during an incident.
-    `invoke_id` is the deterministic `%MachineState{}` counter st-ADR-0008
-    (as amended) blesses as the idempotency key; scoping is mandatory
-    because that counter restarts per chart run.
+    triple (`scope`, `invoke_id`, `macrostep` - ADR-0003) at the top
+    level - Oban's uniqueness `keys` read args at the top level - and
+    the effect's remaining position row data (`state_index`,
+    `invoke_index`, `microstep`, `round`) beside it, self-describing in
+    the store during an incident. `invoke_id` is the authored id used
+    verbatim, or the deterministic `%MachineState{}` counter,
+    st-ADR-0008 (as amended) blesses as the idempotency key; scoping is
+    mandatory because that counter restarts per chart run, and
+    `macrostep` is what tells a state re-entry's fresh invocation apart
+    from a crash replay of the old one.
   - The two host-opaque fields, `params` and `content`, are arbitrary
     terms with no JSON shape, so they ride as tagged
     `:erlang.term_to_binary/1` payloads (`StatifierOban.OpaqueTerm`) and

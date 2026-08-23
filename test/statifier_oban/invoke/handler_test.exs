@@ -135,7 +135,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
 
   # sabotage: `Handler.perform_start/3`'s duplicate insert grew a second
   # row when Worker's unique keys were dropped - went red (two stored
-  # jobs), reverted. Pins the {scope, invoke_id} uniqueness the base's
+  # jobs), reverted. Pins the {scope, invoke_id, macrostep} uniqueness the base's
   # idempotency claim rests on.
   test "performing the same start instruction again conflicts instead of inserting a second job" do
     ctx = ctx_for("sess_invoke_replay")
@@ -145,6 +145,60 @@ defmodule StatifierOban.Invoke.HandlerTest do
     assert :ok = Handler.perform(TestInvokeHandler, payload, ctx)
 
     assert [%Oban.Job{}] = stored_jobs("sess_invoke_replay", "inv_replay")
+  end
+
+  # sabotage: "macrostep" removed from Worker's unique keys - went red
+  # (the second entry's insert conflicted with the first and only one
+  # job was stored), reverted. Pins the re-entry half of the key: an
+  # authored invoke id is byte-identical on every re-entry of its state,
+  # and only the macrostep tells a fresh scheduling decision apart from
+  # a crash replay of the old one.
+  test "re-entering the state inserts a fresh job: same authored invoke_id, later macrostep" do
+    ctx = ctx_for("sess_invoke_reentry")
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("resolve", macrostep: 1)},
+               ctx
+             )
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("resolve", macrostep: 2)},
+               ctx
+             )
+
+    assert [%Oban.Job{}, %Oban.Job{}] = stored_jobs("sess_invoke_reentry", "resolve")
+  end
+
+  # sabotage: `invoke_jobs/2` additionally filtered on a macrostep the
+  # cancel does not carry - went red (the older generation's job stayed
+  # "available"), reverted. Pins that cancellation still addresses
+  # {scope, invoke_id} across every generation, exactly as spec 6.3's
+  # sendid cancellation matches every timer under a send_id.
+  test "a cancel matches every generation stored under {scope, invoke_id}" do
+    ctx = ctx_for("sess_invoke_gens")
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("gen", macrostep: 1)},
+               ctx
+             )
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("gen", macrostep: 2)},
+               ctx
+             )
+
+    assert :ok = Handler.perform(TestInvokeHandler, {:cancel, "gen"}, ctx)
+
+    assert [%Oban.Job{state: "cancelled"}, %Oban.Job{state: "cancelled"}] =
+             stored_jobs("sess_invoke_gens", "gen")
   end
 
   # sabotage: `Handler.perform_cancel/3` was pointed at a query matching
@@ -191,7 +245,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
     %{session_id: scope, invoke_types: nil, invoke_handlers: %{@type_string => TestInvokeHandler}}
   end
 
-  defp invoke_fixture(invoke_id) do
+  defp invoke_fixture(invoke_id, overrides \\ []) do
     %Invoke{
       invoke_id: invoke_id,
       type: @type_string,
@@ -201,7 +255,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
       autoforward: false,
       state_index: 0,
       invoke_index: 0,
-      macrostep: 1,
+      macrostep: Keyword.get(overrides, :macrostep, 1),
       microstep: 1,
       round: 1
     }

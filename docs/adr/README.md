@@ -4,6 +4,7 @@
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | accepted |
 | [0002](0002-host-supplied-oban-instance.md) | Host-supplied Oban instance; SQLite-backed test harness | accepted |
+| [0003](0003-macrostep-joins-the-invoke-job-dedup-key.md) | Macrostep joins the invoke job dedup key | proposed |
 
 New ADRs: next number, same three-section format (Context, Decision,
 Consequences). Pick the number against a freshly fetched remote. A bare

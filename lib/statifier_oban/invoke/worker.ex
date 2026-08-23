@@ -4,20 +4,35 @@ defmodule StatifierOban.Invoke.Worker do
 
   Uniqueness is the whole point of this module, exactly as it is for
   `StatifierOban.Timer.Worker`: jobs are unique on the
-  `{scope, invoke_id}` pair, read off the args at the top level.
-  Re-executing the same drive after a crash rebuilds a byte-identical
-  pair - `invoke_id` is a deterministic `%MachineState{}` counter
-  (st-ADR-0008 as amended) - so the duplicate insert conflicts with the
-  stored job and becomes a no-op. That conflict, not any check in host
-  code, is what makes the at-least-once `perform/2` contract
-  (st-ADR-0051 decision 4) safe for the enqueue itself.
+  `{scope, invoke_id, macrostep}` triple (ADR-0003), read off the args
+  at the top level. Re-executing the same drive after a crash rebuilds
+  a byte-identical triple - `invoke_id` is either the author's literal
+  id, used verbatim, or a deterministic `%MachineState{}` counter
+  (st-ADR-0008 as amended), and `macrostep` is pure fold state stamped
+  on the effect - so the duplicate insert conflicts with the stored job
+  and becomes a no-op. That conflict, not any check in host code, is
+  what makes the at-least-once `perform/2` contract (st-ADR-0051
+  decision 4) safe for the enqueue itself.
+
+  `macrostep` is in the key because `invoke_id` alone cannot tell a
+  crash replay from a state re-entry: an authored id (`<invoke
+  id="resolve">`) is byte-identical on every re-entry of its state, and
+  a retry loop that re-enters legitimately schedules a fresh
+  invocation. Invocations start only at the end of the macrostep, for
+  states still active then, so a `{state, invoke_index}` pair invokes
+  at most once per macrostep: within one macrostep the triple collides
+  exactly when the insert is a replay of the same scheduling decision,
+  and across macrosteps it never collides at all (ADR-0003 lays this
+  out).
 
   The unique window is every state over an infinite period: an invoke
   whose job already completed, was cancelled, or was discarded must
   still swallow a replayed insert, because the replay is the same
   scheduling decision, not a new one. The unique fields exclude `:queue`
   and the meta the delivery module rides on, for the same reasons the
-  timer worker's do.
+  timer worker's do. Cancellation never carries a macrostep: it
+  addresses `{scope, invoke_id}` across every generation, the same way
+  timer cancellation addresses every row under a `send_id`.
 
   `perform/1` decodes the stored effect, resolves the handler module the
   args carry, calls its `run/1` - the host's actual work, at least once,
@@ -49,7 +64,7 @@ defmodule StatifierOban.Invoke.Worker do
     unique: [
       period: :infinity,
       fields: [:worker, :args],
-      keys: [:scope, :invoke_id],
+      keys: [:scope, :invoke_id, :macrostep],
       states: Oban.Job.states()
     ]
 
