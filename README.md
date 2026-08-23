@@ -11,9 +11,22 @@ timeouts measured in hours or days - need the timers to outlive the process.
 This package consumes Statifier's effect vocabulary and schedules that work in
 Oban instead.
 
+## Installation
+
+```elixir
+def deps do
+  [
+    {:statifier_oban, "~> 0.1"}
+  ]
+end
+```
+
 ## Status
 
-Nothing is implemented yet. This repository holds the scaffold only.
+Early, under active development. Delayed sends run through Oban end to end -
+schedule from the `SendDelayed` effect, cancel from the `Cancel` effect,
+deliver behind the run-liveness check - and `use StatifierOban.Invoke.Handler`
+is the Oban-backed invoke handler base on statifier's handler registry.
 
 ## The contract this package implements
 

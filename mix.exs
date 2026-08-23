@@ -15,6 +15,8 @@ defmodule StatifierOban.MixProject do
       name: "StatifierOban",
       description: "Durable timers and async invoke execution for Statifier, backed by Oban",
       source_url: @source_url,
+      docs: docs(),
+      package: package(),
       test_coverage: [tool: ExCoveralls],
       dialyzer: [plt_add_apps: [:ex_unit]],
       preferred_cli_env: [
@@ -34,6 +36,41 @@ defmodule StatifierOban.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  # Hexdocs configuration. These paths are read off the publisher's disk at
+  # `mix docs` time and need no entry in package()'s files: list - the docs
+  # tarball hexdocs hosts is built separately from the package tarball
+  # `mix deps.get` fetches.
+  defp docs do
+    [
+      name: "StatifierOban",
+      source_ref: "v#{@version}",
+      canonical: "https://hexdocs.pm/statifier_oban",
+      source_url: @source_url,
+      main: "readme",
+      extras:
+        [
+          "README.md",
+          "CHANGELOG.md",
+          {"docs/adr/README.md", [title: "Architecture Decision Records", filename: "adr-index"]}
+        ] ++ Enum.sort(Path.wildcard("docs/adr/0*.md")),
+      groups_for_extras: [
+        "Architecture Decision Records": ~r{docs/adr}
+      ]
+    ]
+  end
+
+  defp package do
+    [
+      name: "statifier_oban",
+      licenses: ["MIT"],
+      files: ~w(lib mix.exs README.md LICENSE CHANGELOG.md),
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
+      }
+    ]
+  end
+
   defp deps do
     [
       statifier_dep(),
@@ -50,17 +87,12 @@ defmodule StatifierOban.MixProject do
     ]
   end
 
-  # Statifier is not on Hex - it has no package/0 and no tags - so the default
-  # is a git dep whose SHA mix.lock pins. Note the consequence: Hex refuses to
-  # publish a package that carries a git dependency, so this package cannot
-  # ship until statifier is published. That is upstream's call, not ours.
-  #
   # Export STATIFIER_PATH to point at a local checkout while co-developing a
   # change that spans both repos. It is an env var rather than a mix.exs edit
   # so the override never lands in a commit by accident.
   defp statifier_dep do
     case System.get_env("STATIFIER_PATH") do
-      nil -> {:statifier, github: "riddler/statifier-ex", branch: "main"}
+      nil -> {:statifier, "~> 2.0"}
       path -> {:statifier, path: path, override: true}
     end
   end
