@@ -10,6 +10,24 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.2.1] 2026-08-24
+
+Documentation-only release: brings the package docs to the shared
+hexdocs standard.
+
+### Changed
+
+- ADRs are no longer published to hexdocs; they remain in the repo.
+- README gains the standard badge row (CI, hex version, downloads,
+  docs, license).
+
+### Fixed
+
+- README install snippet now points at `~> 0.2` to match the released
+  package.
+- Two `mix docs` reference warnings resolved; `mix docs` completes
+  with zero warnings.
+
 ## [0.2.0] 2026-08-24
 
 ### Fixed
