@@ -5,8 +5,8 @@ defmodule StatifierOban.Timer.Delivery do
 
   Spec 6.2 says a delayed send whose session terminated before the delay
   elapsed MUST be discarded without delivery. Inside statifier-ex,
-  `Statifier.Session.terminate/2` satisfies that by cancelling every live
-  timer ref before the process exits; a durable scheduler survives process
+  `Statifier.Session` satisfies that on terminate by cancelling every
+  live timer ref before the process exits; a durable scheduler survives process
   death by design, so nothing plays that role for a stored job. What
   replaces it (st-ADR-0054 decision 4): before feeding the fired event
   back, the host MUST establish the run is still live and discard
