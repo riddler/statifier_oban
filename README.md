@@ -1,5 +1,11 @@
 # StatifierOban
 
+[![CI](https://github.com/riddler/statifier_oban/actions/workflows/ci.yml/badge.svg)](https://github.com/riddler/statifier_oban/actions/workflows/ci.yml)
+[![Hex.pm Version](https://img.shields.io/hexpm/v/statifier_oban.svg)](https://hex.pm/packages/statifier_oban)
+[![Hex Downloads](https://img.shields.io/hexpm/dt/statifier_oban.svg)](https://hex.pm/packages/statifier_oban)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/statifier_oban/)
+[![License](https://img.shields.io/hexpm/l/statifier_oban.svg)](https://github.com/riddler/statifier_oban/blob/main/LICENSE)
+
 Durable timers and async invoke execution for
 [Statifier](https://github.com/riddler/statifier-ex), backed by
 [Oban](https://github.com/oban-bg/oban).
@@ -16,7 +22,7 @@ Oban instead.
 ```elixir
 def deps do
   [
-    {:statifier_oban, "~> 0.1"}
+    {:statifier_oban, "~> 0.2"}
   ]
 end
 ```
