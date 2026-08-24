@@ -1,7 +1,7 @@
 # ADR-0003: Macrostep joins the invoke job dedup key
 
-Status: proposed (2026-08-23, sob-76d) - the decision is the operator's;
-this record lays out the collision, the options, and a recommendation
+Status: accepted (2026-08-24, sob-76d) - accepted by the operator's
+merge of PR #26 on 2026-08-23
 
 ## Context
 

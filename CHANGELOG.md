@@ -10,6 +10,16 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.2.0] 2026-08-24
+
+### Fixed
+
+- A re-entered state's authored invoke id schedules a fresh Oban job
+  instead of being deduped against a previous entry's job: invoke jobs
+  are now unique on `{scope, invoke_id, macrostep}` rather than
+  `{scope, invoke_id}`. Crash replays still dedup; cancellation still
+  matches every job under `{scope, invoke_id}`.
+
 ## [0.1.1] 2026-08-23
 
 ### Changed
