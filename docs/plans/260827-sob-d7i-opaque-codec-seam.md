@@ -660,12 +660,12 @@ default, and the ids-only pointer.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Full quality gate passes (`mix quality`) - this phase touches no Elixir
+- [x] Full quality gate passes (`mix quality`) - this phase touches no Elixir
       code beyond doc references, but the gate still runs clean
-- [ ] `docs/adr/0004-host-pluggable-codec-for-opaque-job-args.md` exists with
+- [x] `docs/adr/0004-host-pluggable-codec-for-opaque-job-args.md` exists with
       `Status: proposed`, and `docs/adr/README.md` lists it
-- [ ] `changelog.d/sob-d7i.md` exists
-- [ ] The umbrella's terminology scan (`docs/terminology-firewall.md`) is clean
+- [x] `changelog.d/sob-d7i.md` exists
+- [x] The umbrella's terminology scan (`docs/terminology-firewall.md`) is clean
       over the full diff, and no example invoke type outside
       `myapp:authorize`, `myapp:capture`, `myapp:signup` appears
 
@@ -825,6 +825,25 @@ items are deferred and surfaced once at the end instead of blocking here.
       still delivers, and a genuinely corrupt one and confirm it still cancels
       with `{:undecodable, _}` - the classification widened for codec errors
       only
+
+**Implementation Note**: Use `mix quality --profile loop` between edits; run
+the full `mix quality` as the phase gate. In interactive execution, pause here
+for the human to confirm the manual testing before moving to the next phase.
+In looped (`--loop`) execution, this phase's Automated Verification gates
+advancement automatically (via `/wurk:commit --auto`), and Manual Verification
+items are deferred and surfaced once at the end instead of blocking here.
+
+---
+
+### Phase 4
+
+- [ ] The README section leads with ids-only and reads as a recommendation, not
+      a footnote
+- [ ] The ADR argues the envelope-tag decision well enough that a reader who
+      disagrees can see what would have to change
+- [ ] The ADR stays **Proposed** - accepting it is the operator's, on merge
+- [ ] Every code reference the README and the ADR make (module names, option
+      name, error shapes) matches what Phases 1-3 actually shipped
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here

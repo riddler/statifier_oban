@@ -61,6 +61,41 @@ this package can promise:
 `<send delay="...">` inside a `<foreach>` is fully supported and the old
 leave-the-id-off guidance is retired.)
 
+## Sensitive values in job args
+
+The four host-opaque job-arg fields (a timer's `data` and `caller_context`,
+an invoke's `params` and `content`) are stored in `oban_jobs.args` as
+Base64-encoded external term format - encoded, not protected. Anyone who can
+read the host's Oban table can read them.
+
+Two answers, and most hosts want the first:
+
+1. **Pass ids, not values.** Put entity ids in `data`, `caller_context`,
+   `params`, and `content`, and re-fetch the current record at execution
+   time inside the handler's `run/1` or at delivery. Nothing sensitive is
+   ever written to the job row, the row stays small and readable during an
+   incident, and the value the handler acts on is the current one rather
+   than one captured hours earlier - which matters when the delay is
+   measured in days. The moduledoc example at
+   `lib/statifier_oban/invoke/handler.ex:16-30` already does this: an
+   `myapp:authorize` invoke whose `params` carry an authorization request
+   id, with `run/1` loading the record by that id rather than carrying the
+   card details on the job.
+2. **Configure `:opaque_codec`** when a value genuinely has to travel on
+   the row. Implement `StatifierOban.OpaqueTerm.Codec` and name the module
+   in `StatifierOban.Config`. It must round-trip byte-identically; its
+   module name travels in the payload alongside the encoded bytes, so
+   every node that later reads the row needs the module deployed; key
+   rotation lives inside the host's codec, because the module name - not
+   any key material - is what is durable; an unresolvable codec or a
+   failing decode retries rather than cancelling; and a codec failure at
+   enqueue means no job is inserted. See ADR-0004 for the full decision.
+
+The two compose: ids-only for most fields, a codec for the few that
+genuinely cannot be reduced to an id. The non-opaque fields (`scope`,
+`send_id`, `invoke_id`, and the position data) are never transformed by
+either answer, because dedup and cancellation query them directly.
+
 ## Scope
 
 In scope: delayed sends into Oban jobs with cancellation, and an Oban-backed
