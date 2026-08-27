@@ -1,10 +1,11 @@
 defmodule StatifierOban.Invoke.Delivery.Session do
   @moduledoc """
-  The default `StatifierOban.Invoke.Delivery`: reports a completed invoke
-  back into a live `Statifier.Session` through
-  `Statifier.Session.done_invocation/3`, behind the same two-step
-  liveness check `StatifierOban.Timer.Delivery.Session` runs for a fired
-  timer.
+  The default `StatifierOban.Invoke.Delivery`: reports a completed
+  invoke back into a live `Statifier.Session` through
+  `Statifier.Session.done_invocation/3`, and a permanently failed one
+  through `Statifier.Session.failed_invocation/3`, both behind the same
+  two-step liveness check `StatifierOban.Timer.Delivery.Session` runs
+  for a fired timer.
 
   The two steps run in order because `Statifier.Session.status/1` is a
   `GenServer.call` that exits the caller against a dead process - it
@@ -30,6 +31,16 @@ defmodule StatifierOban.Invoke.Delivery.Session do
   once. `done_invocation/3` is a cast, so `:delivered` means enqueued
   onto the session's inbox, not processed.
 
+  Failure delivery is `Statifier.Session.failed_invocation/3`, the door
+  st-ADR-0068 adds beside it, and everything above holds unchanged: the
+  session builds `error.communication.invoke.<invoke_id>` from the
+  keyword list itself, stamps the same `invokeid`/`origin`/`origintype`,
+  pops the same invocation, and casts. Reusing one liveness check for
+  both doors is deliberate rather than incidental - st-ADR-0068 makes
+  the failure event travel `done_invocation/3`'s own delivery path
+  upstream, so a check that diverged here would be this package
+  contradicting the contract it implements.
+
   This module requires `Statifier.Supervisor` (which owns
   `Statifier.Registry`) to be running: `Registry.lookup/2` raises when it
   is not, and the job retries rather than discards - a missing registry
@@ -41,20 +52,34 @@ defmodule StatifierOban.Invoke.Delivery.Session do
 
   @behaviour StatifierOban.Invoke.Delivery
 
-  @impl StatifierOban.Invoke.Delivery
+  alias StatifierOban.Invoke.Delivery
+
+  @impl Delivery
   def deliver(scope, invoke_id, donedata) when is_binary(scope) and is_binary(invoke_id) do
+    if_running(scope, &Statifier.Session.done_invocation(&1, invoke_id, donedata))
+  end
+
+  @impl Delivery
+  def deliver_failure(scope, invoke_id, failure)
+      when is_binary(scope) and is_binary(invoke_id) and is_list(failure) do
+    if_running(scope, &Statifier.Session.failed_invocation(&1, invoke_id, failure))
+  end
+
+  @spec if_running(String.t(), (pid() -> :ok)) ::
+          :delivered | {:discarded, Delivery.discard_reason()}
+  defp if_running(scope, deliver) do
     case Registry.lookup(Statifier.Registry, scope) do
       [] -> {:discarded, :terminated}
-      [{pid, _value}] -> deliver_if_running(pid, invoke_id, donedata)
+      [{pid, _value}] -> deliver_if_running(pid, deliver)
     end
   end
 
-  @spec deliver_if_running(pid(), String.t(), term()) ::
-          :delivered | {:discarded, StatifierOban.Invoke.Delivery.discard_reason()}
-  defp deliver_if_running(pid, invoke_id, donedata) do
+  @spec deliver_if_running(pid(), (pid() -> :ok)) ::
+          :delivered | {:discarded, Delivery.discard_reason()}
+  defp deliver_if_running(pid, deliver) do
     case Statifier.Session.status(pid) do
       %{status: :running} ->
-        :ok = Statifier.Session.done_invocation(pid, invoke_id, donedata)
+        :ok = deliver.(pid)
         :delivered
 
       %{status: halted} ->

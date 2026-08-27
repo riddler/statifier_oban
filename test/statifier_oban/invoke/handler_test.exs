@@ -36,6 +36,32 @@ defmodule StatifierOban.Invoke.HandlerTest do
   </scxml>
   """
 
+  @failure_type "myapp:capture"
+
+  # The failure acceptance chart: the operator-recovery parking pattern
+  # sob-nnh exists for. `capturing` has no done transition at all, so
+  # reaching `needs_attention` can only be the exhaustion event arriving.
+  @failure_chart """
+  <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="capturing">
+      <state id="capturing">
+          <invoke id="inv_fail_e2e" type="myapp:capture"/>
+          <transition event="error.communication.invoke.inv_fail_e2e" target="needs_attention"/>
+      </state>
+      <state id="needs_attention"/>
+  </scxml>
+  """
+
+  defmodule ExhaustingHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:error, :gateway_down}
+  end
+
   defmodule NoQueueHandler do
     @moduledoc false
     use StatifierOban.Invoke.Handler
@@ -155,6 +181,41 @@ defmodule StatifierOban.Invoke.HandlerTest do
     # empty <finalize/> auto-assigned donedata's "result" first.
     wait_until(fn ->
       Statifier.Session.status(session).configuration == MapSet.new(["finished"])
+    end)
+  end
+
+  # The end-to-end counterpart of the acceptance test above, for the
+  # failure door (ADR-0005, st-ADR-0068): a real chart, a real session, a
+  # real Oban job exhausting its retries, and the run leaving the
+  # invoking state on its own.
+  #
+  # sabotage: `Invoke.Worker.maybe_fail/6`'s delivering clause was
+  # removed - went red (the session sat in `capturing` until wait_until
+  # gave up), reverted.
+  test "acceptance: an invocation that exhausts its retries parks the run in its recovery state" do
+    {:ok, machine} = Statifier.compile(@failure_chart)
+
+    {:ok, session} =
+      Statifier.Session.start_link(machine,
+        invoke_handlers: %{@failure_type => ExhaustingHandler}
+      )
+
+    scope = Statifier.Session.session_id(session)
+
+    wait_until(fn -> match?([_job], stored_jobs(scope, "inv_fail_e2e")) end)
+    [%Oban.Job{id: id}] = stored_jobs(scope, "inv_fail_e2e")
+
+    # `max_attempts` is the host's to set; one attempt makes the first
+    # failure the terminal one, so the test exhausts the retries without
+    # waiting out a real backoff schedule.
+    TestRepo.update_all(where(Oban.Job, [j], j.id == ^id), set: [max_attempts: 1])
+
+    drain()
+
+    assert [%Oban.Job{state: "discarded"}] = stored_jobs(scope, "inv_fail_e2e")
+
+    wait_until(fn ->
+      Statifier.Session.status(session).configuration == MapSet.new(["needs_attention"])
     end)
   end
 

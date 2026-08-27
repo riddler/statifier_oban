@@ -19,6 +19,20 @@ defmodule StatifierOban.Invoke.WorkerTest do
       send(:invoke_worker_test_listener, {:delivered_via_seam, scope, invoke_id, donedata})
       :delivered
     end
+
+    @impl Delivery
+    def deliver_failure(scope, invoke_id, failure) do
+      send(:invoke_worker_test_listener, {:failed_via_seam, scope, invoke_id, failure})
+      :delivered
+    end
+  end
+
+  # A host delivery module written before ADR-0005 added the second door.
+  # Deliberately does not declare the behaviour - declaring it would make
+  # the compiler, rather than the worker, be the thing under test.
+  defmodule DoneOnlyDelivery do
+    @moduledoc false
+    def deliver(_scope, _invoke_id, _donedata), do: :delivered
   end
 
   defmodule FailingRunHandler do
@@ -30,6 +44,17 @@ defmodule StatifierOban.Invoke.WorkerTest do
 
     @impl StatifierOban.Invoke.Handler
     def run(%Invoke{}), do: {:error, :upstream_unreachable}
+  end
+
+  defmodule RaisingRunHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: raise(ArgumentError, "the payment gateway said no")
   end
 
   setup do
@@ -178,6 +203,124 @@ defmodule StatifierOban.Invoke.WorkerTest do
   test "the default delivery discards against a run that no longer exists" do
     assert {:discarded, :terminated} =
              Delivery.Session.deliver("sess_iw_never_lived", "inv_x", nil)
+  end
+
+  # -- permanent failure (ADR-0005, st-ADR-0068) ---------------------------
+
+  # sabotage: `maybe_fail/6`'s guard was flipped to `attempt > max_attempts`
+  # - went red (the terminal attempt delivered nothing), reverted.
+  test "the terminal attempt reports the failure through the seam, classified and counted" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_exhausted", "inv_exhausted", FailingRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)},
+      max_attempts: 1
+    )
+
+    drain()
+
+    assert_received {:failed_via_seam, "sess_iw_exhausted", "inv_exhausted", failure}
+    assert failure[:reason] == "run_failed"
+    assert failure[:attempts] == 1
+    assert failure[:detail] =~ "upstream_unreachable"
+
+    # The job outcome is untouched by the delivery: still a discard,
+    # still carrying the run failure it always carried.
+    assert [%Oban.Job{state: "discarded", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_exhausted", "inv_exhausted")
+
+    assert error =~ "run_failed"
+  end
+
+  # sabotage: `maybe_fail/6`'s catch-all clause was made to deliver too -
+  # went red (the retryable attempt told the run about a failure it would
+  # retry), reverted.
+  test "a failure with retries left tells the run nothing" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_retrying", "inv_retrying", FailingRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)},
+      max_attempts: 3
+    )
+
+    drain()
+
+    assert [%Oban.Job{state: "retryable", attempt: 1}] = jobs("sess_iw_retrying", "inv_retrying")
+
+    refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
+  end
+
+  # sabotage: `run/5`'s rescue arm dropped the `maybe_fail/6` call and only
+  # re-raised - went red (a crashing handler's exhaustion reached nobody),
+  # reverted.
+  test "a handler that raises on its last attempt reports run_crashed, and still discards" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_crashed", "inv_crashed", RaisingRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)},
+      max_attempts: 1
+    )
+
+    drain()
+
+    assert_received {:failed_via_seam, "sess_iw_crashed", "inv_crashed", failure}
+    assert failure[:reason] == "run_crashed"
+    assert failure[:attempts] == 1
+    assert failure[:detail] =~ "the payment gateway said no"
+
+    # Re-raised, not swallowed: the exception still reaches the job row.
+    assert [%Oban.Job{state: "discarded", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_crashed", "inv_crashed")
+
+    assert error =~ "ArgumentError"
+  end
+
+  # sabotage: `resolve_module/3` checked only the first export in the list
+  # - went red (the deliver/3-only module resolved instead of retrying),
+  # reverted.
+  test "a delivery module predating the failure door is unresolvable, not half-usable" do
+    insert!(args_for("sess_iw_olddelivery", "inv_olddelivery", TestInvokeHandler),
+      meta: %{"delivery" => Atom.to_string(DoneOnlyDelivery)}
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_olddelivery", "inv_olddelivery")
+
+    assert error =~ "invalid_delivery"
+  end
+
+  # sabotage: `Delivery.Session.deliver_failure/3` was pointed at
+  # `if_running/2`'s success path unconditionally - went red (a dead run
+  # reported :delivered), reverted.
+  test "the default delivery discards a failure against a run that no longer exists" do
+    assert {:discarded, :terminated} =
+             Delivery.Session.deliver_failure("sess_iw_never_lived", "inv_x",
+               reason: "run_failed",
+               attempts: 1,
+               detail: "gone"
+             )
+  end
+
+  # sabotage: `deliver_if_running/2`'s halted arm returned :delivered -
+  # went red for the failure door exactly as it does for the done door,
+  # reverted.
+  test "the default delivery discards a failure against a halted run" do
+    chart = """
+    <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="end_state">
+        <final id="end_state"/>
+    </scxml>
+    """
+
+    {:ok, machine} = Statifier.compile(chart)
+    {:ok, session} = Statifier.Session.start_link(machine)
+    scope = Statifier.Session.session_id(session)
+
+    wait_until(fn -> Statifier.Session.status(session).status == :done end)
+
+    assert {:discarded, :done} =
+             Delivery.Session.deliver_failure(scope, "inv_halted", reason: "run_failed")
   end
 
   # -- helpers ------------------------------------------------------------

@@ -49,7 +49,10 @@ defmodule StatifierOban.Invoke.Handler do
     statifier-ex's `docs/extending.md` lands on it. `{:ok, donedata}`
     becomes `done.invoke.<invoke_id>` with that donedata, delivered
     behind the run-liveness check; `{:error, reason}` makes the job
-    retry; a raise does the same.
+    retry, and a raise does the same. Exhausting those retries
+    discards the job and delivers
+    `error.communication.invoke.<invoke_id>` into the run (see
+    "Permanent failure surfaces into the chart" below).
 
   `config/0` is read at `perform/2` time, never at planning time - which
   is what keeps the planning callbacks pure even though the config is
@@ -87,19 +90,30 @@ defmodule StatifierOban.Invoke.Handler do
   `invoke.invoke_id` is the key upstream hands you for exactly that,
   as the example above demonstrates.
 
-  ## Open question: surfacing permanent failure into the chart
+  ## Permanent failure surfaces into the chart
 
   `{:error, reason}` from `run/1` (and a raise or exit out of it) maps
   to an Oban **retry**, never a cancel: the work is idempotent on
   `invoke_id` by contract, so retrying is what at-least-once means.
-  When retries are exhausted, Oban discards the job, and today nothing
-  is fed back into the run: the failure is observable on the job row
-  (`discarded` state, `{:run_failed, reason}` in the errors) and
-  nowhere else. Whether - and as what - a permanently failed invocation
-  should surface into the chart (an `error.*` event on the run, for
-  example) is **deliberately open**: the event vocabulary is
-  statifier-ex's call, so this package documents the gap rather than
-  deciding it.
+  When the retries are exhausted, Oban discards the job - and the run
+  hears about it. The discarding attempt delivers
+
+      error.communication.invoke.<invoke_id>
+
+  into the chart, carrying `%{"reason" => class, "attempts" => n,
+  "detail" => text}`, behind the same run-liveness check a completion
+  goes through. A chart that parks failed work for operator recovery
+  transitions on that event, or on the bare `error.communication` it
+  extends, and no longer hangs in the invoking state when your `run/1`
+  gives up for good.
+
+  The event and its payload are statifier-ex's call (st-ADR-0068); the
+  failure classes in `"reason"` are this package's, and
+  `StatifierOban.Invoke.Worker` lists them. Nothing is asked of your
+  `run/1`: keep returning `{:error, reason}` for anything worth
+  retrying, and the retry policy decides when that becomes permanent.
+  This was an open question in earlier versions of this module; ADR-0005
+  records how it was settled.
 
   What this module deliberately does not do: interpret `run/1`'s
   donedata (`<finalize>` and namelist auto-assign are the session's, per
@@ -144,7 +158,8 @@ defmodule StatifierOban.Invoke.Handler do
   `invoke_id`, so it MUST be idempotent on it (statifier-ex
   `docs/extending.md`, "At-least-once"). `{:ok, donedata}` is delivered
   back to the run as `done.invoke.<invoke_id>`; `{:error, reason}` and
-  raises both make the job retry.
+  raises both make the job retry, and exhausting the retries delivers
+  `error.communication.invoke.<invoke_id>` instead.
   """
   @callback run(invoke :: Invoke.t()) :: {:ok, donedata :: term()} | {:error, term()}
 

@@ -198,6 +198,7 @@ type:
 <state id="capturing">
   <invoke id="capture" type="myapp:capture"/>
   <transition event="done.invoke.capture" target="settled"/>
+  <transition event="error.communication.invoke.capture" target="needs_attention"/>
 </state>
 ```
 
@@ -208,6 +209,18 @@ chart) gets a fresh one. Leaving the state before the job runs cancels it.
 `run/1` executing twice is still possible, though: the job is at-least-once,
 so keying the write on `invoke.invoke_id` is the handler's own job and is not
 optional.
+
+The second transition is the other end of the same story. `run/1` returning
+`{:error, reason}` retries, as at-least-once work should - but when the
+retries run out, the job is discarded and
+`error.communication.invoke.capture` is delivered into the run behind the
+same liveness check, carrying `%{"reason" => "run_failed", "attempts" => n,
+"detail" => text}`. Without it the chart would sit in `capturing` forever on
+a processor that never comes back; with it the run parks in
+`needs_attention`, where an operator can see it. A chart that would rather
+catch every kind of communication failure at once transitions on the bare
+`error.communication` instead, and catches this too. See ADR-0005 and
+statifier-ex's ADR-0068.
 
 ### The same two seams in a signup wizard
 
