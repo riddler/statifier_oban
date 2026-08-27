@@ -10,6 +10,26 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.3.0] 2026-08-27
+
+### Added
+
+- `StatifierOban.Config` accepts an optional `:opaque_codec`, a module
+  implementing the new `StatifierOban.OpaqueTerm.Codec` behaviour, that
+  transforms the bytes of a job's host-opaque args (a timer's `data` and
+  `caller_context`, an invoke's `params` and `content`) before they are
+  stored. The default (`nil`) is unchanged: today's plain Base64 encoding.
+  For most hosts, passing entity ids instead of values and re-fetching at
+  execution time remains the recommended shape - see the README's
+  "Sensitive values in job args" section.
+
+### Changed
+
+- The README now opens with a worked canonical-domain example (a card
+  authorization's settlement window as a durable timer, plus an async
+  invoke), and the project docs were refreshed to match the current
+  surface.
+
 ## [0.2.1] 2026-08-24
 
 Documentation-only release: brings the package docs to the shared
