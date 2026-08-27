@@ -456,10 +456,10 @@ Each new test carries its sabotage note.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Full quality gate passes (`mix quality`), including the new Config
+- [x] Full quality gate passes (`mix quality`), including the new Config
       doctests
-- [ ] Coverage stays at or above the `coveralls.json` minimum
-- [ ] The dedup-under-nondeterministic-codec test asserts exactly one stored
+- [x] Coverage stays at or above the `coveralls.json` minimum
+- [x] The dedup-under-nondeterministic-codec test asserts exactly one stored
       job after the replayed insert
 
 #### Manual Verification:
@@ -784,6 +784,26 @@ before considering the plan fully landed.
       invoke, read the stored `oban_jobs.args`, and confirm each opaque payload
       is exactly the map `main` writes for the same term - then cancel one and
       run one worker and confirm the delivered effect is unchanged
+
+**Implementation Note**: Use `mix quality --profile loop` between edits; run
+the full `mix quality` as the phase gate. In interactive execution, pause here
+for the human to confirm the manual testing before moving to the next phase.
+In looped (`--loop`) execution, this phase's Automated Verification gates
+advancement automatically (via `/wurk:commit --auto`), and Manual Verification
+items are deferred and surfaced once at the end instead of blocking here.
+
+---
+
+### Phase 2
+
+- [ ] A stored row is inspected by eye: the dedup-key fields, `send_id`,
+      `invoke_id`, and the position row data are all still plainly readable,
+      and only the four opaque payloads changed
+- [ ] The Config moduledoc's new paragraph reads consistently with the
+      `:delivery` paragraphs beside it
+- [ ] Build a `Config` with no `:opaque_codec`, schedule and cancel a timer and
+      start an invoke through it, and confirm the stored rows are identical to
+      the pre-Phase-2 rows for the same effects
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here

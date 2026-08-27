@@ -7,6 +7,7 @@ defmodule StatifierOban.TimerTest do
 
   alias Statifier.Effect.{Cancel, SendDelayed}
   alias StatifierOban.{Config, TestRepo, Timer}
+  alias StatifierOban.TestCodecs.{Boom, NondeterministicXor, Xor}
   alias StatifierOban.Timer.JobArgs
 
   @oban_name StatifierOban.TimerTestOban
@@ -223,6 +224,78 @@ defmodule StatifierOban.TimerTest do
     # The late cancel matches nothing: terminal states are past cancelling.
     assert {:ok, 0} = Timer.cancel(config, scope_a, cancel_fixture())
     assert %Oban.Job{state: ^terminal_state} = TestRepo.get!(Oban.Job, id)
+  end
+
+  # sabotage: `schedule/3` passed `nil` instead of `config.opaque_codec`
+  # to `JobArgs.from_effect/3` - went red (the stored `data` payload
+  # stayed the plain `t2b64` map, with no `"codec"` tag), reverted.
+  test "with a codec configured, the stored row's opaque fields carry the codec tag, not the plain encoding",
+       %{queue: queue, scope_a: scope_a} do
+    {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue, opaque_codec: Xor)
+    effect = %{send_delayed_fixture() | data: {:secret, "payload"}, caller_context: {:trace, 7}}
+
+    assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope_a, effect)
+
+    %Oban.Job{args: args} = TestRepo.get!(Oban.Job, id)
+
+    assert %{"t2b64" => _, "codec" => "Elixir.StatifierOban.TestCodecs.Xor"} = args["data"]
+
+    assert %{"t2b64" => _, "codec" => "Elixir.StatifierOban.TestCodecs.Xor"} =
+             args["caller_context"]
+
+    refute args["data"]["t2b64"] == Base.encode64(:erlang.term_to_binary(effect.data))
+
+    # The reading side needs no configuration of its own: the tag on the
+    # row decides, and the effect rebuilds byte-identical.
+    assert {:ok, ^scope_a, ^effect} = JobArgs.to_effect(args)
+  end
+
+  # sabotage: `Worker`'s unique `keys` were widened from `[:scope,
+  # :ordinal]` to include `:data` - went red on this test (and, as a
+  # side effect, on two unrelated dedup tests too: adding a field to the
+  # unique key set broke conflict matching altogether once `:data` was
+  # in play), reverted. Pins that dedup depends only on the deterministic
+  # key fields, never on the codec's (possibly nondeterministic) output.
+  test "dedup survives a nondeterministic codec: the replayed insert still conflicts",
+       %{queue: queue, scope_a: scope_a} do
+    {:ok, config} =
+      Config.new(oban: @oban_name, timers_queue: queue, opaque_codec: NondeterministicXor)
+
+    effect = send_delayed_fixture()
+
+    assert {:ok, %Oban.Job{id: id, conflict?: false}} = Timer.schedule(config, scope_a, effect)
+    assert {:ok, %Oban.Job{id: ^id, conflict?: true}} = Timer.schedule(config, scope_a, effect)
+
+    assert job_count(queue) == 1
+  end
+
+  # sabotage: `timer_jobs/1`'s scope clause was changed from
+  # `j.args["scope"]` to `j.args["data"]` - went red on this test (and on
+  # two unrelated cancel tests too, since the scope match broke
+  # entirely), reverted.
+  test "a cancel still matches and cancels a job whose opaque fields were codec-encoded",
+       %{queue: queue, scope_a: scope_a} do
+    {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue, opaque_codec: Xor)
+    effect = %{send_delayed_fixture() | data: {:secret, "payload"}}
+
+    assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope_a, effect)
+    assert {:ok, 1} = Timer.cancel(config, scope_a, cancel_fixture())
+
+    assert %Oban.Job{state: "cancelled"} = TestRepo.get!(Oban.Job, id)
+  end
+
+  # sabotage: `OpaqueTerm.encode/2`'s codec clause dropped the
+  # `{:error, reason}` branch, always returning `{:ok, _}` - went red (a
+  # job was inserted despite the codec's declared failure), reverted.
+  test "a codec that fails at encode inserts no job", %{queue: queue, scope_a: scope_a} do
+    {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue, opaque_codec: Boom)
+
+    effect = %{send_delayed_fixture() | data: {:secret, "payload"}}
+
+    assert {:error, {:codec_failed, "data", {:codec_failed, Boom, :boom}}} =
+             Timer.schedule(config, scope_a, effect)
+
+    assert job_count(queue) == 0
   end
 
   defp cancel_fixture do

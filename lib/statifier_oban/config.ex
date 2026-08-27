@@ -58,6 +58,23 @@ defmodule StatifierOban.Config do
 
       iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, invoke_queue: 42)
       {:error, {:invalid_option, :invoke_queue, 42}}
+
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, opaque_codec: MyApp.ArgsCodec)
+      {:ok, %StatifierOban.Config{oban: MyApp.Oban, timers_queue: :t, opaque_codec: MyApp.ArgsCodec}}
+
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, opaque_codec: "MyApp.ArgsCodec")
+      {:error, {:invalid_option, :opaque_codec, "MyApp.ArgsCodec"}}
+
+  ## The `:opaque_codec` seam (ADR-0002 stance)
+
+  `:opaque_codec` is optional and defaults to `nil` - identity, today's
+  plain `t2b64` encoding, unchanged. A host that wants a transform over
+  the bytes of the four host-opaque job-arg fields (a timer's `data` and
+  `caller_context`, an invoke's `params` and `content`) names a module
+  implementing `StatifierOban.OpaqueTerm.Codec` here. As with `:oban`,
+  `:delivery`, and every other seam this module owns, there is no ambient
+  or application-env fallback: a host that wants the transform states it
+  in the keyword list handed to `new/1`, explicitly, every time.
   """
 
   @enforce_keys [:oban, :timers_queue]
@@ -65,6 +82,7 @@ defmodule StatifierOban.Config do
     :oban,
     :timers_queue,
     :invoke_queue,
+    :opaque_codec,
     delivery: StatifierOban.Timer.Delivery.Session,
     invoke_delivery: StatifierOban.Invoke.Delivery.Session
   ]
@@ -81,17 +99,28 @@ defmodule StatifierOban.Config do
   invoke-handler jobs are inserted into (`nil` on a timers-only host), and
   `:invoke_delivery` is the module implementing
   `StatifierOban.Invoke.Delivery` that a completed invoke's `done.invoke`
-  goes back through.
+  goes back through. `:opaque_codec` is the module implementing
+  `StatifierOban.OpaqueTerm.Codec` that the two enqueue sites run the
+  host-opaque job-arg fields through (`nil` - the default - is the
+  identity encoding).
   """
   @type t :: %__MODULE__{
           oban: Oban.name(),
           timers_queue: atom() | String.t(),
           invoke_queue: atom() | String.t() | nil,
+          opaque_codec: module() | nil,
           delivery: module(),
           invoke_delivery: module()
         }
 
-  @known_options [:oban, :timers_queue, :invoke_queue, :delivery, :invoke_delivery]
+  @known_options [
+    :oban,
+    :timers_queue,
+    :invoke_queue,
+    :delivery,
+    :invoke_delivery,
+    :opaque_codec
+  ]
   @default_delivery StatifierOban.Timer.Delivery.Session
   @default_invoke_delivery StatifierOban.Invoke.Delivery.Session
 
@@ -100,9 +129,10 @@ defmodule StatifierOban.Config do
 
   `:oban` and `:timers_queue` are required; `:invoke_queue` is optional
   with no default (see the moduledoc); `:delivery` and `:invoke_delivery`
-  are optional and default to the `Statifier.Session`-backed seams.
-  Unknown options are rejected rather than ignored, so a typo fails
-  loudly instead of silently dropping a setting.
+  are optional and default to the `Statifier.Session`-backed seams;
+  `:opaque_codec` is optional and defaults to `nil` (identity - see the
+  moduledoc's ADR-0002 stance). Unknown options are rejected rather than
+  ignored, so a typo fails loudly instead of silently dropping a setting.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) when is_list(opts) do
@@ -113,14 +143,16 @@ defmodule StatifierOban.Config do
          {:ok, invoke_queue} <- fetch_invoke_queue(opts),
          {:ok, delivery} <- fetch_delivery(opts, :delivery, @default_delivery),
          {:ok, invoke_delivery} <-
-           fetch_delivery(opts, :invoke_delivery, @default_invoke_delivery) do
+           fetch_delivery(opts, :invoke_delivery, @default_invoke_delivery),
+         {:ok, opaque_codec} <- fetch_opaque_codec(opts) do
       {:ok,
        %__MODULE__{
          oban: oban,
          timers_queue: timers_queue,
          invoke_queue: invoke_queue,
          delivery: delivery,
-         invoke_delivery: invoke_delivery
+         invoke_delivery: invoke_delivery,
+         opaque_codec: opaque_codec
        }}
     end
   end
@@ -143,6 +175,20 @@ defmodule StatifierOban.Config do
 
       other ->
         {:error, {:invalid_option, key, other}}
+    end
+  end
+
+  # Shape only, per the moduledoc: `nil` (identity, the documented
+  # default) or an atom that is neither `nil` nor a boolean. Whether the
+  # named module actually implements `StatifierOban.OpaqueTerm.Codec` is
+  # resolved later, at the boundary that uses it - the same division of
+  # labor `:delivery` and `:invoke_delivery` follow.
+  @spec fetch_opaque_codec(keyword()) :: {:ok, module() | nil} | {:error, term()}
+  defp fetch_opaque_codec(opts) do
+    case Keyword.get(opts, :opaque_codec) do
+      nil -> {:ok, nil}
+      codec when is_atom(codec) and not is_boolean(codec) -> {:ok, codec}
+      other -> {:error, {:invalid_option, :opaque_codec, other}}
     end
   end
 

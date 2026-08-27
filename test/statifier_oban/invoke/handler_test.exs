@@ -7,7 +7,8 @@ defmodule StatifierOban.Invoke.HandlerTest do
 
   alias Statifier.Effect.Invoke
   alias StatifierOban.{Config, TestInvokeHandler, TestRepo}
-  alias StatifierOban.Invoke.{Handler, Worker}
+  alias StatifierOban.Invoke.{Handler, JobArgs, Worker}
+  alias StatifierOban.TestCodecs.Boom
 
   @type_string "myapp:authorize"
 
@@ -49,6 +50,69 @@ defmodule StatifierOban.Invoke.HandlerTest do
 
     @impl StatifierOban.Invoke.Handler
     def run(%Invoke{}), do: {:ok, nil}
+  end
+
+  defmodule XorCodecHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config do
+      {:ok, config} =
+        Config.new(
+          oban: StatifierOban.TestInvokeHandler.oban_name(),
+          timers_queue: "t",
+          invoke_queue: StatifierOban.TestInvokeHandler.queue(),
+          opaque_codec: StatifierOban.TestCodecs.Xor
+        )
+
+      config
+    end
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{"result" => "authorized"}}
+  end
+
+  defmodule NondeterministicCodecHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config do
+      {:ok, config} =
+        Config.new(
+          oban: StatifierOban.TestInvokeHandler.oban_name(),
+          timers_queue: "t",
+          invoke_queue: StatifierOban.TestInvokeHandler.queue(),
+          opaque_codec: StatifierOban.TestCodecs.NondeterministicXor
+        )
+
+      config
+    end
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{"result" => "authorized"}}
+  end
+
+  defmodule BoomCodecHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config do
+      {:ok, config} =
+        Config.new(
+          oban: StatifierOban.TestInvokeHandler.oban_name(),
+          timers_queue: "t",
+          invoke_queue: StatifierOban.TestInvokeHandler.queue(),
+          opaque_codec: StatifierOban.TestCodecs.Boom
+        )
+
+      config
+    end
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{"result" => "authorized"}}
   end
 
   setup do
@@ -232,6 +296,72 @@ defmodule StatifierOban.Invoke.HandlerTest do
                invoke_types: nil,
                invoke_handlers: %{}
              })
+  end
+
+  # sabotage: `perform_start/3` passed `nil` instead of `config.opaque_codec`
+  # to `JobArgs.from_invoke/4` - went red (the stored `params` payload
+  # stayed the plain `t2b64` map, with no `"codec"` tag), reverted.
+  test "with a codec configured, the stored row's params/content carry the codec tag" do
+    ctx = ctx_for("sess_invoke_codec")
+    invoke = %{invoke_fixture("inv_codec") | params: %{"secret" => 1}, content: {:blob, "x"}}
+
+    assert :ok = Handler.perform(XorCodecHandler, {:start, invoke}, ctx)
+
+    assert [%Oban.Job{args: args}] = stored_jobs("sess_invoke_codec", "inv_codec")
+
+    assert %{"t2b64" => _, "codec" => "Elixir.StatifierOban.TestCodecs.Xor"} = args["params"]
+    assert %{"t2b64" => _, "codec" => "Elixir.StatifierOban.TestCodecs.Xor"} = args["content"]
+
+    refute args["params"]["t2b64"] == Base.encode64(:erlang.term_to_binary(invoke.params))
+
+    # The reading side needs no configuration of its own: the tag on the
+    # row decides, and the effect rebuilds byte-identical.
+    assert {:ok, "sess_invoke_codec", _handler, ^invoke} = JobArgs.to_invoke(args)
+  end
+
+  # sabotage: `Worker`'s unique `keys` were widened from `[:scope,
+  # :invoke_id, :macrostep]` to include `:params` - went red (the
+  # nondeterministic codec's varying bytes made the replayed start's args
+  # differ, so it no longer conflicted and a second row appeared),
+  # reverted. Pins that dedup depends only on the deterministic key
+  # fields, never on the codec's (possibly nondeterministic) output.
+  test "dedup under a nondeterministic codec: a replayed start still conflicts, one job stored" do
+    ctx = ctx_for("sess_invoke_codec_replay")
+    payload = {:start, invoke_fixture("inv_codec_replay")}
+
+    assert :ok = Handler.perform(NondeterministicCodecHandler, payload, ctx)
+    assert :ok = Handler.perform(NondeterministicCodecHandler, payload, ctx)
+
+    assert [%Oban.Job{}] = stored_jobs("sess_invoke_codec_replay", "inv_codec_replay")
+  end
+
+  # sabotage: `invoke_jobs/2`'s scope clause was changed from
+  # `j.args["scope"]` to `j.args["params"]` - went red on this test (and
+  # on two unrelated cancel tests too, since the scope match broke
+  # entirely), reverted.
+  test "a cancel still matches and cancels a job whose opaque fields were codec-encoded" do
+    ctx = ctx_for("sess_invoke_codec_cancel")
+
+    assert :ok =
+             Handler.perform(XorCodecHandler, {:start, invoke_fixture("inv_codec_cancel")}, ctx)
+
+    assert :ok = Handler.perform(XorCodecHandler, {:cancel, "inv_codec_cancel"}, ctx)
+
+    assert [%Oban.Job{state: "cancelled"}] =
+             stored_jobs("sess_invoke_codec_cancel", "inv_codec_cancel")
+  end
+
+  # sabotage: `OpaqueTerm.encode/2`'s codec clause dropped the
+  # `{:error, reason}` branch, always returning `{:ok, _}` - went red (a
+  # job was inserted despite the codec's declared failure), reverted.
+  test "a codec that fails at encode means no job is inserted" do
+    ctx = ctx_for("sess_invoke_codec_boom")
+    invoke = %{invoke_fixture("inv_codec_boom") | params: %{"secret" => 1}}
+
+    assert {:error, {:codec_failed, "params", {:codec_failed, Boom, :boom}}} =
+             Handler.perform(BoomCodecHandler, {:start, invoke}, ctx)
+
+    assert [] = stored_jobs("sess_invoke_codec_boom", "inv_codec_boom")
   end
 
   # -- helpers ------------------------------------------------------------

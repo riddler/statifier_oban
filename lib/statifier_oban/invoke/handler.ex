@@ -196,6 +196,12 @@ defmodule StatifierOban.Invoke.Handler do
   `:invoke_queue` and carries the config's `:invoke_delivery` module in
   its meta; meta is not part of the unique fields, so a replay under a
   reconfigured delivery still conflicts with the stored job.
+
+  The config's `:opaque_codec` is fixed at enqueue time: read once from
+  `handler.config()`, and run over the effect's host-opaque `params` and
+  `content` before the job is stored. The module name travels on the row
+  alongside the encoded bytes, so the worker that later decodes the job
+  and runs `handler.run/1` needs no configuration of its own.
   """
   @spec perform_start(module(), Invoke.t(), UpstreamHandler.ctx()) ::
           :ok | {:error, perform_error()}
@@ -204,7 +210,7 @@ defmodule StatifierOban.Invoke.Handler do
 
     with {:ok, scope} <- validated_scope(ctx),
          {:ok, queue} <- invoke_queue(config),
-         {:ok, args} <- JobArgs.from_invoke(scope, handler, invoke, nil) do
+         {:ok, args} <- JobArgs.from_invoke(scope, handler, invoke, config.opaque_codec) do
       changeset =
         Worker.new(args,
           queue: queue,

@@ -78,4 +78,44 @@ defmodule StatifierOban.ConfigTest do
     assert {:error, {:invalid_option, :delivery, false}} =
              Config.new(oban: MyHost.Oban, timers_queue: :t, delivery: false)
   end
+
+  # sabotage: fetch_opaque_codec/1 was replaced with a body that always
+  # returns {:ok, nil} regardless of opts - went red here and on two
+  # doctests (a configured codec never made it into the struct), reverted.
+  test "new/1 carries the host's opaque codec module" do
+    assert {:ok, %Config{opaque_codec: MyHost.ArgsCodec}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, opaque_codec: MyHost.ArgsCodec)
+  end
+
+  # sabotage: `Keyword.get(opts, :opaque_codec)` was given a non-nil
+  # sentinel default (`StatifierOban.SentinelDefaultCodec`) - went red
+  # here and on unrelated doctests (an absent option stopped defaulting
+  # to identity), reverted.
+  test "new/1 defaults :opaque_codec to nil (identity)" do
+    assert {:ok, %Config{opaque_codec: nil}} = Config.new(oban: MyHost.Oban, timers_queue: :t)
+  end
+
+  # sabotage: fetch_opaque_codec's guard clause was replaced with a
+  # catch-all `codec -> {:ok, codec}` - went red (a string and a doctest
+  # binary both built configs instead of erroring), reverted.
+  test "new/1 rejects an :opaque_codec that is not a module" do
+    assert {:error, {:invalid_option, :opaque_codec, "MyHost.ArgsCodec"}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, opaque_codec: "MyHost.ArgsCodec")
+
+    assert {:error, {:invalid_option, :opaque_codec, true}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, opaque_codec: true)
+  end
+
+  # sabotage: `:opaque_codec` was dropped from `@known_options` - went red
+  # here and on the corresponding doctest (a correctly-spelled, valid
+  # option was rejected as unknown), reverted.
+  test "new/1 still rejects an unknown option alongside a valid :opaque_codec" do
+    assert {:error, {:unknown_options, [:bogus]}} =
+             Config.new(
+               oban: MyHost.Oban,
+               timers_queue: :t,
+               opaque_codec: MyHost.ArgsCodec,
+               bogus: 1
+             )
+  end
 end
