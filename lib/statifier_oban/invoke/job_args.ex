@@ -23,7 +23,10 @@ defmodule StatifierOban.Invoke.JobArgs do
   - The two host-opaque fields, `params` and `content`, are arbitrary
     terms with no JSON shape, so they ride as tagged
     `:erlang.term_to_binary/1` payloads (`StatifierOban.OpaqueTerm`) and
-    come back byte-identical.
+    come back byte-identical. `from_invoke/4`'s optional codec runs over
+    both fields' bytes and tags the payload with its module name
+    (`StatifierOban.OpaqueTerm.Codec`); `to_invoke/1` reads whatever tag
+    the stored row carries, regardless of what the reading caller passed.
   - `handler` is the module name of the `StatifierOban.Invoke.Handler`
     implementation, written from a validated module at enqueue time and
     resolved back by the worker - a resolution failure there is
@@ -45,6 +48,10 @@ defmodule StatifierOban.Invoke.JobArgs do
   @type decode_error ::
           {:missing_field, String.t()}
           | {:invalid_field, String.t(), term()}
+          | OpaqueTerm.decode_error()
+
+  @typedoc "Why `from_invoke/4` could not build an args map."
+  @type encode_error :: {:codec_failed, String.t(), OpaqueTerm.encode_error()}
 
   @doc """
   Builds the args map for an invoke job from the scope, the handler
@@ -52,25 +59,33 @@ defmodule StatifierOban.Invoke.JobArgs do
 
   The caller (`StatifierOban.Invoke.Handler.perform_start/3`) has already
   validated the scope; this function only lays fields out on the wire.
+  `params` and `content` are encoded through a `with`, so the first codec
+  failure short-circuits and no partially-encoded args map is ever
+  returned.
   """
-  @spec from_invoke(String.t(), module(), Invoke.t()) :: args()
-  def from_invoke(scope, handler, %Invoke{} = invoke)
+  @spec from_invoke(String.t(), module(), Invoke.t(), module() | nil) ::
+          {:ok, args()} | {:error, encode_error()}
+  def from_invoke(scope, handler, %Invoke{} = invoke, codec \\ nil)
       when is_binary(scope) and is_atom(handler) do
-    %{
-      "scope" => scope,
-      "invoke_id" => invoke.invoke_id,
-      "handler" => Atom.to_string(handler),
-      "type" => invoke.type,
-      "src" => invoke.src,
-      "params" => OpaqueTerm.encode(invoke.params),
-      "content" => OpaqueTerm.encode(invoke.content),
-      "autoforward" => invoke.autoforward,
-      "state_index" => invoke.state_index,
-      "invoke_index" => invoke.invoke_index,
-      "macrostep" => invoke.macrostep,
-      "microstep" => invoke.microstep,
-      "round" => invoke.round
-    }
+    with {:ok, params} <- encode_term("params", invoke.params, codec),
+         {:ok, content} <- encode_term("content", invoke.content, codec) do
+      {:ok,
+       %{
+         "scope" => scope,
+         "invoke_id" => invoke.invoke_id,
+         "handler" => Atom.to_string(handler),
+         "type" => invoke.type,
+         "src" => invoke.src,
+         "params" => params,
+         "content" => content,
+         "autoforward" => invoke.autoforward,
+         "state_index" => invoke.state_index,
+         "invoke_index" => invoke.invoke_index,
+         "macrostep" => invoke.macrostep,
+         "microstep" => invoke.microstep,
+         "round" => invoke.round
+       }}
+    end
   end
 
   @doc """
@@ -110,6 +125,19 @@ defmodule StatifierOban.Invoke.JobArgs do
          microstep: microstep,
          round: round
        }}
+    end
+  end
+
+  # -- opaque terms: tagged term_to_binary payloads, shared with
+  # `StatifierOban.Timer.JobArgs` so both job kinds' rows stay mutually
+  # readable during an incident.
+
+  @spec encode_term(String.t(), term(), module() | nil) ::
+          {:ok, nil | %{String.t() => String.t()}} | {:error, encode_error()}
+  defp encode_term(field, term, codec) do
+    case OpaqueTerm.encode(term, codec) do
+      {:ok, payload} -> {:ok, payload}
+      {:error, reason} -> {:error, {:codec_failed, field, reason}}
     end
   end
 

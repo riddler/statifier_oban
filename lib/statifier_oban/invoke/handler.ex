@@ -128,6 +128,7 @@ defmodule StatifierOban.Invoke.Handler do
   @type perform_error ::
           {:missing_option, :invoke_queue}
           | {:invalid_scope, term()}
+          | JobArgs.encode_error()
           | Ecto.Changeset.t()
 
   @doc """
@@ -202,11 +203,10 @@ defmodule StatifierOban.Invoke.Handler do
     config = handler.config()
 
     with {:ok, scope} <- validated_scope(ctx),
-         {:ok, queue} <- invoke_queue(config) do
+         {:ok, queue} <- invoke_queue(config),
+         {:ok, args} <- JobArgs.from_invoke(scope, handler, invoke, nil) do
       changeset =
-        scope
-        |> JobArgs.from_invoke(handler, invoke)
-        |> Worker.new(
+        Worker.new(args,
           queue: queue,
           meta: %{"delivery" => Atom.to_string(config.invoke_delivery)}
         )

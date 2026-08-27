@@ -34,6 +34,7 @@ defmodule StatifierOban.Timer do
   @type schedule_error ::
           {:non_self_target, String.t()}
           | Key.error()
+          | JobArgs.encode_error()
           | Ecto.Changeset.t()
 
   @doc """
@@ -55,13 +56,12 @@ defmodule StatifierOban.Timer do
   @spec schedule(Config.t(), Key.scope(), SendDelayed.t()) ::
           {:ok, Oban.Job.t()} | {:error, schedule_error()}
   def schedule(%Config{} = config, scope, %SendDelayed{target: nil} = effect) do
-    with {:ok, _dedup_key} <- Key.dedup_key(scope, effect) do
+    with {:ok, _dedup_key} <- Key.dedup_key(scope, effect),
+         {:ok, args} <- JobArgs.from_effect(scope, effect, nil) do
       scheduled_at = DateTime.add(DateTime.utc_now(), effect.delay_ms, :millisecond)
 
       changeset =
-        scope
-        |> JobArgs.from_effect(effect)
-        |> Worker.new(
+        Worker.new(args,
           queue: config.timers_queue,
           scheduled_at: scheduled_at,
           meta: %{"delivery" => Atom.to_string(config.delivery)}
