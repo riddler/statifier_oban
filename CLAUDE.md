@@ -102,8 +102,13 @@ in-flight timer dies with the node. This package consumes Statifier's effect
 vocabulary and schedules that work in Oban instead, so a chart with delays
 measured in hours or days survives a deploy.
 
-**Nothing is implemented yet.** The repository holds the scaffold only, so
-almost every convention below is inherited rather than demonstrated.
+Both halves are implemented: `StatifierOban.Timer` schedules and cancels
+delayed sends from the `SendDelayed` and `Cancel` effects, and
+`use StatifierOban.Invoke.Handler` is the Oban-backed invoke handler base on
+statifier's per-session handler registry. Both enqueue sites run the
+host-opaque job-arg fields through the optional `:opaque_codec` seam
+(ADR-0004, proposed). The README's worked example is the current picture of
+the public surface; read it before adding to it.
 
 Always refer to state machines as **state charts**, as statifier-ex does.
 
