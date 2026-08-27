@@ -13,7 +13,7 @@ defmodule StatifierOban.Invoke.HandlerConformanceTest do
   # job for inv_1), reverted.
   use Statifier.Testing.HandlerCase,
     handler: StatifierOban.TestInvokeHandler,
-    type: "myapp:enrich"
+    type: "myapp:authorize"
 
   import Ecto.Query, only: [where: 3]
 

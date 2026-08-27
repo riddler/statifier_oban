@@ -6,7 +6,7 @@ defmodule StatifierOban.Invoke.JobArgsTest do
 
   @invoke %Invoke{
     invoke_id: "inv_1",
-    type: "myapp:enrich",
+    type: "myapp:authorize",
     src: nil,
     params: %{"account_id" => 42, :atom_key => {:tuple, "value"}},
     content: [1, 2, {:three, ~U[2026-08-22 12:00:00Z]}],
