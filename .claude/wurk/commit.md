@@ -13,10 +13,12 @@ narrows it.
 
 Two consequences worth spelling out at commit time:
 
-- **There is no CI and no second reviewer.** The full gate run before the
-  commit is the only thing that ever verifies this branch. A
-  `--profile loop` green is not the trigger - it skips dialyzer, deps audit,
-  and coverage.
+- **The gate before the commit is the only pre-commit verification.** CI
+  exists (`.github/workflows/ci.yml` runs the manifest's `gate.full` on
+  pushes to `main` and on pull requests), but it fires after the push, and
+  there is no second reviewer, so nothing catches a bad commit before it
+  leaves this machine. A `--profile loop` green is not the trigger - it skips
+  dialyzer, deps audit, and coverage.
 - **A diff touching no Elixir code has no gate to run** and may commit on
   review of the diff alone (the authority table says so explicitly). The
   manifest's `gate.build_paths` is the boundary: a docs-only or
@@ -44,15 +46,19 @@ this project's convention (CLAUDE.md: sabotage every new test that asserts
 `changelog.mode` is `fragments` with `dir: changelog.d`. The needs/no-entry
 test is written down in `changelog.d/README.md` - one file per bead, named
 `changelog.d/<bead-id>.md`, standard Keep a Changelog headings, entries only
-for changes visible to someone calling the public API. While the package is
-pre-first-release, most scaffold and tooling work needs no fragment, and that
-is the expected outcome, not a step you skipped.
+for changes visible to someone calling the public API. Scaffold and tooling
+work needs no fragment, and that is the expected outcome, not a step you
+skipped. `changelog.d/` holding nothing but its `README.md` is the normal
+resting state between releases: fragments are assembled into a `CHANGELOG.md`
+section at release and removed.
 
 ## Version bump: never
 
-`mix.exs` holds `0.1.0` until a release bead says otherwise, and the
-authority table marks releases and version bumps as never an agent's. Never
-edit the version field as part of an ordinary commit.
+`mix.exs` holds `0.3.0` (published to Hex 2026-08-27) until a release bead
+says otherwise, and the authority table marks releases and version bumps as
+never an agent's. Never edit the version field as part of an ordinary commit,
+and do not update this number here as a convenience - the released version
+moves only through a release bead, which updates this line with it.
 
 ## Gate thresholds are the operator's call
 
@@ -64,14 +70,22 @@ smaller than statifier-ex's; that decision stands (statifier-ex
 docs/family-reference.md marks the custom stages as not-reference). Report
 the finding and stop.
 
-## Gate attestation: dep-provided `mix gate.verify`
+## Gate attestation: dep-provided `mix quality.verify`
 
-The manifest wires `gate.attest` to `mix gate.verify` (bead `sob-ehl`). The
-task ships in the `statifier` dependency - the family's one adoptable
-verifier per statifier-ex docs/family-reference.md - and this repo carries
-no local copy of it, by the operator's ruling on st-hcgl. It adds no gate
-stage: it re-runs `mix quality --report -` and attests that the run was
-full (status ok, scope all, no profile, no run-narrowing skip). An
-unattended (`/wurk:commit --auto`) run therefore advances only on
-`attested: true`; do not fake an attestation, and treat an attest failure
-as a narrowed or red gate to fix, not a prompt to bypass.
+The manifest wires `gate.attest` to `mix quality.verify`. The task ships in
+`ex_quality` (`~> 0.14`, `only: :dev`, locked at `0.14.0`), so this repo
+carries no local copy of it, on purpose, per the operator's ruling on
+st-hcgl. It adds no gate stage and does not touch `.quality.exs`: it runs
+the gate with a machine-readable report and attests that the run was full
+(status ok, scope all, no profile, no run-narrowing skip). An unattended
+(`/wurk:commit --auto`) run therefore advances only on `attested: true`; do
+not fake an attestation, and treat an attest failure as a narrowed or red
+gate to fix, not a prompt to bypass.
+
+The earlier wiring named `mix gate.verify` (bead `sob-ehl`) and attributed
+the task to the `statifier` dependency. Both were false - no
+`Mix.Tasks.Gate.Verify` was ever adopted here or shipped by any dependency -
+and `7ee1426` (`sob-569`, fleet ruling F2 2026-08-27) dropped the
+declaration outright, because a dangling attest command can yield a blocked
+`gate_attest_could_not_start` envelope. Re-pointing it at the published
+`ex_quality` task is what that commit deferred.
