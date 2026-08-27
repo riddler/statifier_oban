@@ -22,6 +22,14 @@ defmodule StatifierOban.Timer do
   - **`delay_ms` is relative**, milliseconds from the moment the send was
     scheduled, so the fire time is computed at insert
     (`DateTime.utc_now/0` plus the delay), never re-derived later.
+
+  The config's `:opaque_codec` is fixed at schedule time: `schedule/3`
+  reads it once, from the `Config` the caller hands it, and encodes the
+  effect's host-opaque fields through it before the job is ever stored.
+  The module name travels on the row alongside the encoded bytes
+  (`StatifierOban.OpaqueTerm`'s `"codec"` tag), so the worker that later
+  decodes the fired job needs no configuration of its own - it reads
+  whatever tag the row carries.
   """
 
   import Ecto.Query, only: [where: 3]
@@ -57,7 +65,7 @@ defmodule StatifierOban.Timer do
           {:ok, Oban.Job.t()} | {:error, schedule_error()}
   def schedule(%Config{} = config, scope, %SendDelayed{target: nil} = effect) do
     with {:ok, _dedup_key} <- Key.dedup_key(scope, effect),
-         {:ok, args} <- JobArgs.from_effect(scope, effect, nil) do
+         {:ok, args} <- JobArgs.from_effect(scope, effect, config.opaque_codec) do
       scheduled_at = DateTime.add(DateTime.utc_now(), effect.delay_ms, :millisecond)
 
       changeset =
