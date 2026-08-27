@@ -178,10 +178,20 @@ defmodule StatifierOban.Timer.WorkerTest do
   # sabotage: decode/1's catch-all clause was widened to retry instead of
   # cancel - went red (failure: 1 instead of cancelled: 1), reverted. The
   # codec-shaped clauses above must not swallow a genuinely corrupt row.
+  # sabotage: the cancel reason was retagged {:corrupt_row, reason} - went
+  # red on the error assertion below, reverted.
   test "a genuinely corrupt row still cancels, not retries", %{queue: queue} do
-    {:ok, _job} = Oban.insert(@oban_name, Worker.new(%{"bogus" => true}, queue: queue))
+    {:ok, %Oban.Job{id: id}} =
+      Oban.insert(@oban_name, Worker.new(%{"bogus" => true}, queue: queue))
 
     assert %{cancelled: 1, failure: 0, success: 0} = drain(queue)
+
+    # The cancellation reason is the row fact, not a codec-shaped one:
+    # the widened classification must not have swallowed this arm.
+    assert %Oban.Job{state: "cancelled", errors: [%{"error" => error}]} =
+             TestRepo.get!(Oban.Job, id)
+
+    assert error =~ "undecodable"
   end
 
   defp drain(queue) do

@@ -76,11 +76,10 @@ Two answers, and most hosts want the first:
    ever written to the job row, the row stays small and readable during an
    incident, and the value the handler acts on is the current one rather
    than one captured hours earlier - which matters when the delay is
-   measured in days. The moduledoc example at
-   `lib/statifier_oban/invoke/handler.ex:16-30` already does this: an
-   `myapp:authorize` invoke whose `params` carry an authorization request
-   id, with `run/1` loading the record by that id rather than carrying the
-   card details on the job.
+   measured in days. A `myapp:authorize` invoke would put an authorization
+   request id in `params` and let `run/1` load the record by that id,
+   rather than carrying the card details on the job;
+   `StatifierOban.Invoke.Handler`'s moduledoc shows that `run/1` shape.
 2. **Configure `:opaque_codec`** when a value genuinely has to travel on
    the row. Implement `StatifierOban.OpaqueTerm.Codec` and name the module
    in `StatifierOban.Config`. It must round-trip byte-identically; its

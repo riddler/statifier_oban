@@ -75,10 +75,19 @@ defmodule StatifierOban.Invoke.WorkerTest do
   # sabotage: `decode/1` returned {:error, reason} instead of
   # {:cancel, ...} - went red (failure: 1 rather than cancelled: 1),
   # reverted.
+  # sabotage: the cancel reason was retagged {:corrupt_row, reason} - went
+  # red on the error assertion below, reverted.
   test "an undecodable row cancels rather than retrying forever" do
-    insert!(%{"bogus" => true})
+    %Oban.Job{id: id} = insert!(%{"bogus" => true})
 
     assert %{cancelled: 1, failure: 0, success: 0} = drain()
+
+    # The cancellation reason is the row fact, not a codec-shaped one:
+    # the widened classification must not have swallowed this arm.
+    assert %Oban.Job{state: "cancelled", errors: [%{"error" => error}]} =
+             TestRepo.get!(Oban.Job, id)
+
+    assert error =~ "undecodable"
   end
 
   # sabotage: `resolve_module/4` rescued into {:ok, module} - went red
