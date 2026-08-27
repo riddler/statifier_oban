@@ -748,6 +748,15 @@ One question is recorded and deliberately left open rather than decided here:
   answered, both cases should be answered together, in one bead, rather than
   this one being solved separately here.
 
+  **Machine-checked (unattended, 2026-08-27):** left open, and the premise
+  still holds. The upstream question it defers to is still recorded, at
+  `lib/statifier_oban/invoke/handler.ex:90` ("## Open question: surfacing
+  permanent failure into the chart"), and this branch introduces no new event
+  or delivery path of any kind - the only `lib/` additions naming delivery are
+  the existing `:delivery` / `:invoke_delivery` options. Deciding the question
+  itself belongs to statifier-ex's event vocabulary and to the human, so no
+  `**Settled**` note is written here.
+
 No other question is left open: every design choice above is decided, and the
 alternatives considered are recorded in the ADR (Phase 4) and in "What We're
 NOT Doing".
@@ -775,15 +784,69 @@ before considering the plan fully landed.
 
 ### Phase 1
 
+An unattended `/wurk:verify` pass on 2026-08-27 machine-checked what an agent
+could genuinely check here. Those notes are agent evidence, **not** the human
+confirmation the checkboxes stand for: every box below is deliberately still
+unticked.
+
 - [ ] The behaviour's moduledoc reads as generic infrastructure - a reader
       cannot tell what a host would plug in, and nothing hints at a specific
       library
+
+      **Machine-checked (unattended, 2026-08-27):** partial. A
+      case-insensitive scan of every added line in `lib/`, `test/`,
+      `README.md`, `docs/adr/`, and `changelog.d/` for
+      `encrypt|decrypt|cipher|aes|kms|vault|cloak|aws|crypto|key material|
+      nacl|libsodium|jose|jwt` returns no package, library, or algorithm
+      name. The five hits are all generic concepts on the contract itself
+      ("key material (a key id, a nonce, a version byte)"), plus two in
+      `test/support/opaque_codecs.ex`, whose moduledocs say "Not
+      cryptography" outright. `mix.exs` gained no dependency. The umbrella's
+      terminology-firewall scan is clean, and the only invoke type used
+      anywhere is `myapp:authorize`. Whether the prose *reads* as generic
+      infrastructure is a reading judgment and stays for the human.
+
 - [ ] The sabotage note above each new test names a mutation that would
       genuinely have gone red
+
+      **Machine-checked (unattended, 2026-08-27):** every one of the 35 tests
+      and properties this branch adds carries a `# sabotage:` note in the
+      comment block directly above it (checked mechanically against the
+      `main...HEAD` test diff). Eight of the named mutations were then applied
+      to `lib/` for real and their tests re-run: `OpaqueTerm.encode/2`
+      dropping its `{:error, _}` branch (2 failures), `Timer.Worker.decode/1`
+      dropping the `{:invalid_codec, _}` clause (1), `Timer.Worker.decode/1`'s
+      catch-all widened from cancel to retry (1), the same widening in
+      `Invoke.Worker.decode/1` (1), `Config.fetch_opaque_codec/1` accepting
+      any shape (2), `Handler.perform_start/3` passing `nil` for the codec
+      (2), `Timer.schedule/3` passing `nil` for the codec (2), and
+      `OpaqueTerm`'s decode ignoring the row's `"codec"` tag (6). All eight
+      went red; all eight were reverted. The remaining notes were not
+      executed.
+
 - [ ] With no codec configured anywhere, schedule one delayed send and one
       invoke, read the stored `oban_jobs.args`, and confirm each opaque payload
       is exactly the map `main` writes for the same term - then cancel one and
       run one worker and confirm the delivered effect is unchanged
+
+      **Machine-checked (unattended, 2026-08-27):** done against `main`
+      itself, not against a reimplementation of it. A detached worktree at the
+      merge base (`7ee1426`) and this branch were each driven through the same
+      script: `Timer.schedule/3` for two `%SendDelayed{}` (one with a non-JSON
+      `{:host_term, map}` `data` and a `{:trace, _}` `caller_context`, one
+      with both `nil`), `Timer.cancel/3` over the second, and
+      `Invoke.Handler.perform/3` for a `myapp:authorize` `%Invoke{}` with a
+      map `params` and a `{:blob, _}` `content` - then every `oban_jobs` row
+      dumped (worker, queue, state, args, meta) with maps sorted. The two
+      dumps diff **identical**: every opaque payload is exactly
+      `%{"t2b64" => ...}`, no `"codec"` key anywhere, and the cancel returned
+      `{:ok, 1}` on both. `Timer.JobArgs.to_effect/1` on the stored row
+      rebuilt the original `%SendDelayed{}` exactly. A worker actually running
+      an untagged row and delivering the unchanged effect is pinned by
+      `test/statifier_oban/timer/worker_test.exs`'s "the config's delivery
+      module is the seam the fired job goes through", which asserts
+      `assert_received {:delivered_via_seam, ^scope, ^effect}` on the same
+      struct that was scheduled.
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here
@@ -799,11 +862,42 @@ items are deferred and surfaced once at the end instead of blocking here.
 - [ ] A stored row is inspected by eye: the dedup-key fields, `send_id`,
       `invoke_id`, and the position row data are all still plainly readable,
       and only the four opaque payloads changed
+
+      **Machine-checked (unattended, 2026-08-27):** the same `%SendDelayed{}`
+      was scheduled twice, once through a `Config` with no `:opaque_codec` and
+      once through one naming `StatifierOban.TestCodecs.Xor`, and the two
+      stored args maps compared key by key. Exactly two keys differ - `"data"`
+      and `"caller_context"`, the timer job's two opaque fields - and both
+      carry `"codec" => "Elixir.StatifierOban.TestCodecs.Xor"`. Every other
+      key (`ordinal`, `send_id`, `event`, `target`, `type`, `delay_ms`,
+      `c_index`, `owner`, `macrostep`, `microstep`, `round`,
+      `id_from_author`) is byte-identical between the two rows. Reading the
+      dumped rows: the dedup pair `{scope, ordinal}`, `send_id`, `invoke_id`,
+      and the position data are all plain JSON scalars, unquoted and legible.
+      `to_effect/1` rebuilt the original effect from the tagged row with no
+      configuration on the reading side.
+
 - [ ] The Config moduledoc's new paragraph reads consistently with the
       `:delivery` paragraphs beside it
+
+      **Still deferred (unattended pass, 2026-08-27):** a reading judgment, so
+      left for the human. For what it is worth to that reading: the new
+      paragraph carries a heading in the same "## The ... (ADR-000N stance)"
+      shape, states the default and what it means, and closes on the same
+      no-ambient-fallback sentence the surrounding options use; the two added
+      doctests follow the accept/reject pairing every other option has.
+
 - [ ] Build a `Config` with no `:opaque_codec`, schedule and cancel a timer and
       start an invoke through it, and confirm the stored rows are identical to
       the pre-Phase-2 rows for the same effects
+
+      **Machine-checked (unattended, 2026-08-27):** covered by the
+      merge-base diff recorded under Phase 1 above, which is exactly this
+      scenario run on both sides: a `Config` with no `:opaque_codec`, two
+      `Timer.schedule/3` calls, one `Timer.cancel/3`, and one
+      `Invoke.Handler.perform/3` start. Every stored row - args, meta, queue,
+      worker, and terminal state - is identical to the row the merge base
+      writes for the same effect.
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here
@@ -818,13 +912,44 @@ items are deferred and surfaced once at the end instead of blocking here.
 
 - [ ] The moduledoc outcome lists in both workers read as one consistent set of
       rules with the delivery/handler rows already there
+
+      **Still deferred (unattended pass, 2026-08-27):** a reading judgment, so
+      left for the human. Structurally, the new bullet is identical in both
+      workers, sits directly above the delivery/handler bullet it parallels,
+      and uses that bullet's own vocabulary ("an environment fact, fixable by
+      a deploy ... not a fact about the row").
+
 - [ ] The retry-not-cancel choice still looks right when read as an operator:
       a key that has not reached a node yet costs retries and an alert, not a
       silently destroyed timer
+
+      **Still deferred (unattended pass, 2026-08-27):** a design judgment with
+      a defensible alternative, and the ADR (decision 5, and the "Risk
+      accepted" consequence) is where it is recorded, so this is the
+      operator's call on merge rather than something an agent should settle.
+      No agent change was made here.
+
 - [ ] Run a stored job whose args carry no codec tag at all and confirm it
       still delivers, and a genuinely corrupt one and confirm it still cancels
       with `{:undecodable, _}` - the classification widened for codec errors
       only
+
+      **Machine-checked (unattended, 2026-08-27):** both halves hold, and the
+      second half needed a fix. An untagged row delivering is pinned by
+      `test/statifier_oban/timer/worker_test.exs`'s "the config's delivery
+      module is the seam the fired job goes through" (`success: 1` plus
+      `assert_received {:delivered_via_seam, ^scope, ^effect}`) and by "a job
+      stored without delivery meta falls back to the Session default". The
+      corrupt-row tests in both workers, however, asserted only the drain
+      counts, never the `{:undecodable, _}` reason this item names - so a
+      widening of the codec clauses that also swallowed the row-fact arm could
+      have passed them. Both now read the cancelled row back and assert the
+      recorded error contains `undecodable`. Each new assertion was then
+      sabotaged in its own right - the cancel reason retagged
+      `{:corrupt_row, reason}` in both workers - and each went red on exactly
+      that assertion; reverted. The pre-existing mutations on those two tests
+      (each worker's `decode/1` catch-all widened from cancel to retry) were
+      re-run too and also went red.
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here
@@ -839,11 +964,64 @@ items are deferred and surfaced once at the end instead of blocking here.
 
 - [ ] The README section leads with ids-only and reads as a recommendation, not
       a footnote
+
+      **Machine-checked (unattended, 2026-08-27):** partial. Structurally it
+      does: the section opens "Two answers, and most hosts want the first",
+      item 1 is **Pass ids, not values**, item 2 is the codec, and the closing
+      paragraph repeats "ids-only for most fields". The changelog fragment
+      says the same thing. Whether it *reads* as a recommendation rather than
+      a footnote is a reading judgment and stays for the human.
+
 - [ ] The ADR argues the envelope-tag decision well enough that a reader who
       disagrees can see what would have to change
+
+      **Still deferred (unattended pass, 2026-08-27):** a judgment about
+      argument quality, left for the human. The material a reader would need
+      is present - decision 2 states the tag rule and its three motivating
+      cases, and the last Consequences bullet names the rejected `meta`-
+      carried alternative with the reason - but whether that is *enough* is
+      not something an agent should decide.
+
 - [ ] The ADR stays **Proposed** - accepting it is the operator's, on merge
+
+      **Machine-checked (unattended, 2026-08-27):**
+      `docs/adr/0004-host-pluggable-codec-for-opaque-job-args.md` line 3 reads
+      `Status: proposed (2026-08-27, sob-d7i)`, and `docs/adr/README.md`'s
+      index row for 0004 reads `proposed`. Both were left untouched by this
+      pass. (0001-0003 read `accepted`, so the house form is lowercase and
+      0004 matches it.)
+
 - [ ] Every code reference the README and the ADR make (module names, option
       name, error shapes) matches what Phases 1-3 actually shipped
+
+      **Machine-checked (unattended, 2026-08-27): three mismatches found and
+      fixed.** Every module name, option name, arity, and error shape named in
+      `README.md`, `docs/adr/0004-*.md`, `changelog.d/sob-d7i.md`, and the
+      `lib/` moduledocs was checked against the shipped source. Correct as
+      written: `StatifierOban.OpaqueTerm.Codec`, `:opaque_codec`,
+      `OpaqueTerm.encode/2`, `decode_field/2`, `{:codec_failed, codec,
+      reason}` at encode, and `{:invalid_field, ...}` /
+      `{:invalid_codec, field, name}` / `{:codec_failed, field, module,
+      reason}` at decode, all matching `@type encode_error` / `decode_error`
+      and both workers' `decode/1` clauses. Wrong, and now fixed:
+
+      1. `README.md` cited the ids-only example as
+         `lib/statifier_oban/invoke/handler.ex:16-30`; the example is at
+         lines 9-26, and it does not in fact show ids-in-`params` - it keys
+         the write on `invoke.invoke_id` and passes `invoke.params` through.
+         The claim "already does this" was therefore false twice over. The
+         line-number citation is gone (it would rot again on the next edit to
+         that moduledoc) and the sentence now says what the example actually
+         shows.
+      2. `lib/statifier_oban/timer/job_args.ex` still said `to_effect/1` is
+         the inverse of `from_effect/2`; the function is now `from_effect/3`.
+      3. `lib/statifier_oban/invoke/job_args.ex` still said `to_invoke/1` is
+         the inverse of `from_invoke/3`; the function is now `from_invoke/4`.
+
+      Also checked and clean: the branch names no encryption package, library,
+      or algorithm anywhere, `mix.exs` gained no dependency, the umbrella
+      terminology-firewall scan returns zero hits, and the only invoke type
+      used is `myapp:authorize`.
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here

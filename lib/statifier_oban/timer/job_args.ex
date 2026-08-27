@@ -23,7 +23,7 @@ defmodule StatifierOban.Timer.JobArgs do
     (`StatifierOban.OpaqueTerm.Codec`); `to_effect/1` reads whatever tag
     the stored row carries, regardless of what the reading caller passed.
 
-  `to_effect/1` is the exact inverse of `from_effect/2` for every
+  `to_effect/1` is the exact inverse of `from_effect/3` for every
   `%SendDelayed{}` the scheduler accepts: what the fired job carries is
   enough to rebuild the event and its position, per ADR-0054's
   correlation rule - position is read off the stored effect, never

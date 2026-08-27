@@ -33,7 +33,7 @@ defmodule StatifierOban.Invoke.JobArgs do
     deploy-shaped (the module was renamed or removed after the job was
     stored) and retries, exactly like the timer worker's delivery module.
 
-  `to_invoke/1` is the exact inverse of `from_invoke/3` for every
+  `to_invoke/1` is the exact inverse of `from_invoke/4` for every
   `%Statifier.Effect.Invoke{}` the base handler enqueues: what the job
   carries is enough to hand the handler's `run/1` the same effect the
   planning callback saw.
