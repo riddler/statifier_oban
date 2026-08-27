@@ -18,7 +18,10 @@ defmodule StatifierOban.Timer.JobArgs do
     byte-identical. `caller_context` stays row data, never a key component
     (st-ADR-0063 decision 6). Decoding uses `:safe`, so a payload naming
     an atom the reading node has never seen decodes to a typed error
-    rather than minting atoms.
+    rather than minting atoms. `from_effect/3`'s optional codec runs over
+    both fields' bytes and tags the payload with its module name
+    (`StatifierOban.OpaqueTerm.Codec`); `to_effect/1` reads whatever tag
+    the stored row carries, regardless of what the reading caller passed.
 
   `to_effect/1` is the exact inverse of `from_effect/2` for every
   `%SendDelayed{}` the scheduler accepts: what the fired job carries is
@@ -36,33 +39,44 @@ defmodule StatifierOban.Timer.JobArgs do
   @type decode_error ::
           {:missing_field, String.t()}
           | {:invalid_field, String.t(), term()}
+          | OpaqueTerm.decode_error()
+
+  @typedoc "Why `from_effect/3` could not build an args map."
+  @type encode_error :: {:codec_failed, String.t(), OpaqueTerm.encode_error()}
 
   @doc """
   Builds the args map for a timer job from the scope and the effect.
 
   The caller has already validated the scope and ordinal via
   `StatifierOban.Timer.Key.dedup_key/2`; this function only lays fields
-  out on the wire.
+  out on the wire. `data` and `caller_context` are encoded through a
+  `with`, so the first codec failure short-circuits and no
+  partially-encoded args map is ever returned.
   """
-  @spec from_effect(String.t(), SendDelayed.t()) :: args()
-  def from_effect(scope, %SendDelayed{} = effect) when is_binary(scope) do
-    %{
-      "scope" => scope,
-      "ordinal" => effect.ordinal,
-      "event" => effect.event,
-      "target" => effect.target,
-      "type" => effect.type,
-      "data" => encode_term(effect.data),
-      "send_id" => effect.send_id,
-      "delay_ms" => effect.delay_ms,
-      "c_index" => effect.c_index,
-      "owner" => encode_owner(effect.owner),
-      "macrostep" => effect.macrostep,
-      "microstep" => effect.microstep,
-      "round" => effect.round,
-      "id_from_author" => effect.id_from_author?,
-      "caller_context" => encode_term(effect.caller_context)
-    }
+  @spec from_effect(String.t(), SendDelayed.t(), module() | nil) ::
+          {:ok, args()} | {:error, encode_error()}
+  def from_effect(scope, %SendDelayed{} = effect, codec \\ nil) when is_binary(scope) do
+    with {:ok, data} <- encode_term("data", effect.data, codec),
+         {:ok, caller_context} <- encode_term("caller_context", effect.caller_context, codec) do
+      {:ok,
+       %{
+         "scope" => scope,
+         "ordinal" => effect.ordinal,
+         "event" => effect.event,
+         "target" => effect.target,
+         "type" => effect.type,
+         "data" => data,
+         "send_id" => effect.send_id,
+         "delay_ms" => effect.delay_ms,
+         "c_index" => effect.c_index,
+         "owner" => encode_owner(effect.owner),
+         "macrostep" => effect.macrostep,
+         "microstep" => effect.microstep,
+         "round" => effect.round,
+         "id_from_author" => effect.id_from_author?,
+         "caller_context" => caller_context
+       }}
+    end
   end
 
   @doc """
@@ -141,8 +155,14 @@ defmodule StatifierOban.Timer.JobArgs do
   # `StatifierOban.Invoke.JobArgs` so both job kinds' rows stay mutually
   # readable during an incident.
 
-  @spec encode_term(term()) :: nil | %{String.t() => String.t()}
-  defp encode_term(term), do: OpaqueTerm.encode(term)
+  @spec encode_term(String.t(), term(), module() | nil) ::
+          {:ok, nil | %{String.t() => String.t()}} | {:error, encode_error()}
+  defp encode_term(field, term, codec) do
+    case OpaqueTerm.encode(term, codec) do
+      {:ok, payload} -> {:ok, payload}
+      {:error, reason} -> {:error, {:codec_failed, field, reason}}
+    end
+  end
 
   @spec decode_term_field(args(), String.t()) :: {:ok, term()} | {:error, decode_error()}
   defp decode_term_field(args, field), do: OpaqueTerm.decode_field(args, field)

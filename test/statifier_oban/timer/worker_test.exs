@@ -148,10 +148,8 @@ defmodule StatifierOban.Timer.WorkerTest do
   end
 
   defp insert_with_meta(queue, scope, meta) do
-    changeset =
-      scope
-      |> JobArgs.from_effect(fired_fixture())
-      |> Worker.new(queue: queue, meta: meta)
+    {:ok, args} = JobArgs.from_effect(scope, fired_fixture())
+    changeset = Worker.new(args, queue: queue, meta: meta)
 
     {:ok, job} = Oban.insert(@oban_name, changeset)
     job

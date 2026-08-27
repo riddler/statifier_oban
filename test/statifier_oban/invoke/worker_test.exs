@@ -140,19 +140,22 @@ defmodule StatifierOban.Invoke.WorkerTest do
   # -- helpers ------------------------------------------------------------
 
   defp args_for(scope, invoke_id, handler) do
-    JobArgs.from_invoke(scope, handler, %Invoke{
-      invoke_id: invoke_id,
-      type: "myapp:authorize",
-      src: nil,
-      params: %{},
-      content: nil,
-      autoforward: false,
-      state_index: 0,
-      invoke_index: 0,
-      macrostep: 1,
-      microstep: 1,
-      round: 1
-    })
+    {:ok, args} =
+      JobArgs.from_invoke(scope, handler, %Invoke{
+        invoke_id: invoke_id,
+        type: "myapp:authorize",
+        src: nil,
+        params: %{},
+        content: nil,
+        autoforward: false,
+        state_index: 0,
+        invoke_index: 0,
+        macrostep: 1,
+        microstep: 1,
+        round: 1
+      })
+
+    args
   end
 
   defp insert!(args, opts \\ []) do
