@@ -539,10 +539,10 @@ cancels.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Full quality gate passes (`mix quality`)
-- [ ] Both workers' tests assert `{:error, _}` for the two codec-shaped
+- [x] Full quality gate passes (`mix quality`)
+- [x] Both workers' tests assert `{:error, _}` for the two codec-shaped
       failures and `{:cancel, _}` for the row-shaped ones
-- [ ] Coverage stays at or above the `coveralls.json` minimum
+- [x] Coverage stays at or above the `coveralls.json` minimum
 
 #### Manual Verification:
 - [ ] The moduledoc outcome lists in both workers read as one consistent set of
@@ -804,6 +804,27 @@ items are deferred and surfaced once at the end instead of blocking here.
 - [ ] Build a `Config` with no `:opaque_codec`, schedule and cancel a timer and
       start an invoke through it, and confirm the stored rows are identical to
       the pre-Phase-2 rows for the same effects
+
+**Implementation Note**: Use `mix quality --profile loop` between edits; run
+the full `mix quality` as the phase gate. In interactive execution, pause here
+for the human to confirm the manual testing before moving to the next phase.
+In looped (`--loop`) execution, this phase's Automated Verification gates
+advancement automatically (via `/wurk:commit --auto`), and Manual Verification
+items are deferred and surfaced once at the end instead of blocking here.
+
+---
+
+### Phase 3
+
+- [ ] The moduledoc outcome lists in both workers read as one consistent set of
+      rules with the delivery/handler rows already there
+- [ ] The retry-not-cancel choice still looks right when read as an operator:
+      a key that has not reached a node yet costs retries and an alert, not a
+      silently destroyed timer
+- [ ] Run a stored job whose args carry no codec tag at all and confirm it
+      still delivers, and a genuinely corrupt one and confirm it still cancels
+      with `{:undecodable, _}` - the classification widened for codec errors
+      only
 
 **Implementation Note**: Use `mix quality --profile loop` between edits; run
 the full `mix quality` as the phase gate. In interactive execution, pause here

@@ -54,6 +54,11 @@ defmodule StatifierOban.Invoke.Worker do
     same way;
   - an undecodable row cancels with `{:undecodable, reason}` - no number
     of retries makes a corrupt row decodable;
+  - a codec named on the row that this node cannot resolve, or one that
+    cannot decode the row right now, returns `{:error, {:invalid_codec,
+    _}}` or `{:error, {:codec_failed, _}}` and retries - an environment
+    fact, fixable by a deploy or by making the key available, not a fact
+    about the row;
   - a handler or delivery module that cannot be resolved returns
     `{:error, {:invalid_handler, _}}` / `{:error, {:invalid_delivery, _}}`
     and retries - environment facts about the host's code, fixable by a
@@ -86,10 +91,14 @@ defmodule StatifierOban.Invoke.Worker do
   end
 
   @spec decode(JobArgs.args()) ::
-          {:ok, String.t(), String.t(), Statifier.Effect.Invoke.t()} | {:cancel, term()}
+          {:ok, String.t(), String.t(), Statifier.Effect.Invoke.t()}
+          | {:error, term()}
+          | {:cancel, term()}
   defp decode(args) do
     case JobArgs.to_invoke(args) do
       {:ok, scope, handler_name, invoke} -> {:ok, scope, handler_name, invoke}
+      {:error, {:invalid_codec, _field, _name} = reason} -> {:error, reason}
+      {:error, {:codec_failed, _field, _codec, _reason} = reason} -> {:error, reason}
       {:error, reason} -> {:cancel, {:undecodable, reason}}
     end
   end
