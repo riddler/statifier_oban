@@ -12,8 +12,10 @@ Durable timers and async invoke execution for
 
 Statifier's session runs delayed sends on `Process.send_after/3`, so every
 in-flight timer dies with the node: a deploy silently drops every pending
-delayed send. Charts with human-timescale delays - follow-ups, escalations,
-timeouts measured in hours or days - need the timers to outlive the process.
+delayed send. Charts with human-timescale delays - a signup wizard's
+abandonment follow-up, a card authorization's settlement window, escalations
+and timeouts measured in hours or days - need the timers to outlive the
+process.
 This package consumes Statifier's effect vocabulary and schedules that work in
 Oban instead.
 

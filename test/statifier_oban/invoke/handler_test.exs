@@ -9,7 +9,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
   alias StatifierOban.{Config, TestInvokeHandler, TestRepo}
   alias StatifierOban.Invoke.{Handler, Worker}
 
-  @type_string "myapp:enrich"
+  @type_string "myapp:authorize"
 
   # The acceptance chart: "calling" invokes the handler under test;
   # `namelist="result"` plus the empty `<finalize/>` auto-assigns the
@@ -22,10 +22,10 @@ defmodule StatifierOban.Invoke.HandlerTest do
           <data id="result"/>
       </datamodel>
       <state id="calling">
-          <invoke id="inv_e2e" type="myapp:enrich" namelist="result">
+          <invoke id="inv_e2e" type="myapp:authorize" namelist="result">
               <finalize/>
           </invoke>
-          <transition event="done.invoke.inv_e2e" cond="result == 'enriched'" target="finished"/>
+          <transition event="done.invoke.inv_e2e" cond="result == 'authorized'" target="finished"/>
           <transition event="done.invoke" target="wrong"/>
           <transition event="abort" target="aborted"/>
       </state>

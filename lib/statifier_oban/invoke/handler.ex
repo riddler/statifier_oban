@@ -6,7 +6,7 @@ defmodule StatifierOban.Invoke.Handler do
   the run as `done.invoke.<invoke_id>` through
   `StatifierOban.Invoke.Delivery`.
 
-      defmodule MyApp.EnrichHandler do
+      defmodule MyApp.AuthorizationHandler do
         use StatifierOban.Invoke.Handler
 
         @impl StatifierOban.Invoke.Handler
@@ -17,10 +17,10 @@ defmodule StatifierOban.Invoke.Handler do
           # `invoke.invoke_id` is the idempotency key upstream hands you:
           # stable by construction across replays. Keying the write on it
           # makes a re-run land on the prior attempt's row instead of
-          # creating a second enrichment.
-          with {:ok, enrichment} <-
-                 MyApp.Enrichments.upsert_by_invoke_id(invoke.invoke_id, invoke.params) do
-            {:ok, %{"enrichment_id" => enrichment.id}}
+          # authorizing the card a second time.
+          with {:ok, authorization} <-
+                 MyApp.Payments.authorize_by_invoke_id(invoke.invoke_id, invoke.params) do
+            {:ok, %{"authorization_id" => authorization.id}}
           end
         end
       end

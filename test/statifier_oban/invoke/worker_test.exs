@@ -54,7 +54,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
 
     assert %{success: 1, cancelled: 0, failure: 0} = drain()
 
-    assert_received {:delivered_via_seam, "sess_iw_seam", "inv_seam", %{"result" => "enriched"}}
+    assert_received {:delivered_via_seam, "sess_iw_seam", "inv_seam", %{"result" => "authorized"}}
   end
 
   # sabotage: `run/2`'s {:error, reason} arm returned {:ok, reason} - went
@@ -142,7 +142,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
   defp args_for(scope, invoke_id, handler) do
     JobArgs.from_invoke(scope, handler, %Invoke{
       invoke_id: invoke_id,
-      type: "myapp:enrich",
+      type: "myapp:authorize",
       src: nil,
       params: %{},
       content: nil,

@@ -34,5 +34,5 @@ defmodule StatifierOban.TestInvokeHandler do
   end
 
   @impl StatifierOban.Invoke.Handler
-  def run(%Statifier.Effect.Invoke{}), do: {:ok, %{"result" => "enriched"}}
+  def run(%Statifier.Effect.Invoke{}), do: {:ok, %{"result" => "authorized"}}
 end
