@@ -34,7 +34,196 @@ end
 Early, under active development. Delayed sends run through Oban end to end -
 schedule from the `SendDelayed` effect, cancel from the `Cancel` effect,
 deliver behind the run-liveness check - and `use StatifierOban.Invoke.Handler`
-is the Oban-backed invoke handler base on statifier's handler registry.
+is the Oban-backed invoke handler base on statifier's handler registry. Both
+enqueue sites run the host-opaque job-arg fields through the optional
+`:opaque_codec` seam described below.
+
+One thing is deliberately unfinished: what a *permanently* failed invocation
+should look like inside the chart. A `run/1` that keeps failing exhausts its
+Oban retries and is discarded, observable on the job row and nowhere else. The
+event vocabulary is statifier-ex's to decide, so the semantics are being
+finalized upstream and this package documents the gap rather than inventing an
+event for it. See `StatifierOban.Invoke.Handler`'s moduledoc.
+
+## A worked example
+
+Two things have to be true before any of this runs: the host owns an Oban
+instance (this package never starts one - ADR-0002), and the host names the
+queues. That is the whole of the configuration:
+
+```elixir
+{:ok, config} =
+  StatifierOban.Config.new(
+    oban: MyApp.Oban,                  # the host's own Oban instance name
+    timers_queue: :statifier_timers,   # required
+    invoke_queue: :statifier_invokes   # only if you run invoke handlers
+  )
+```
+
+There is no default for any of the three: a missing one is a configuration
+error at the call site rather than a silent fall-back into whatever instance
+or queue happens to be running.
+
+### Durable timers: a card authorization's settlement window
+
+An authorization holds for seven days. If nothing captures it in that window
+it expires, and a capture before then has to take the timer back down. In
+SCXML that is one delayed send and one cancel:
+
+```xml
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="authorized">
+  <state id="authorized">
+    <onentry>
+      <send id="hold" event="authorization.expired" delay="7d"/>
+    </onentry>
+    <onexit>
+      <cancel sendid="hold"/>
+    </onexit>
+    <transition event="capture.requested" target="capturing"/>
+    <transition event="authorization.expired" target="expired"/>
+  </state>
+  <state id="capturing">
+    <!-- filled in by the invoke example below -->
+    <transition event="done.invoke.capture" target="settled"/>
+  </state>
+  <final id="settled"/>
+  <final id="expired"/>
+</scxml>
+```
+
+Left alone, `Statifier.Session` arms that seven-day delay with
+`Process.send_after/3` and the next deploy drops it. To make it durable, read
+the two effects off the session's subscriber stream and hand them here:
+
+```elixir
+defmodule MyApp.TimerSubscriber do
+  use GenServer
+
+  alias Statifier.Effect.{Cancel, SendDelayed}
+  alias StatifierOban.Timer
+
+  def start_link({session, config}), do: GenServer.start_link(__MODULE__, {session, config})
+
+  @impl GenServer
+  def init({session, config}) do
+    :ok = Statifier.Session.subscribe(session, self())
+    # The scope keys every stored job. `session_id` is the right answer for
+    # any host running sessions; a host with its own durable run id supplies
+    # that instead, along with its own `StatifierOban.Timer.Delivery`.
+    {:ok, %{scope: Statifier.Session.session_id(session), config: config}}
+  end
+
+  @impl GenServer
+  def handle_info(
+        {:statifier, _id, {:effect, {:send_delayed, %SendDelayed{target: nil} = effect}}},
+        state
+      ) do
+    {:ok, _job} = Timer.schedule(state.config, state.scope, effect)
+    {:noreply, state}
+  end
+
+  # Any other target's route is resolved inside the session and never travels
+  # on the effect (st-ADR-0055), so leave it to the library.
+  def handle_info({:statifier, _id, {:effect, {:send_delayed, %SendDelayed{}}}}, state),
+    do: {:noreply, state}
+
+  def handle_info({:statifier, _id, {:effect, {:cancel, %Cancel{} = effect}}}, state) do
+    {:ok, _cancelled} = Timer.cancel(state.config, state.scope, effect)
+    {:noreply, state}
+  end
+
+  def handle_info({:statifier, _id, _other}, state), do: {:noreply, state}
+end
+```
+
+`Timer.schedule/3` inserts one job into `:timers_queue`, scheduled at now plus
+the effect's relative `delay_ms`, unique on `{scope, ordinal}`. That
+uniqueness is the load-bearing part: an at-least-once host that re-executes
+the same drive after a crash gets `{:ok, %Oban.Job{conflict?: true}}` and one
+stored job, not two authorizations expiring. When the job fires seven days
+later, `StatifierOban.Timer.Worker` feeds `authorization.expired` back into
+the run through the delivery seam, behind a liveness check - a run that
+terminated or halted in the meantime discards the event rather than receiving
+it.
+
+`Timer.cancel/3` matches on `{scope, send_id}` and returns `{:ok, count}`:
+`capture.requested` leaves `authorized`, the `<cancel sendid="hold"/>` becomes
+a `Cancel` effect, and the stored job is cancelled. A cancel that matches
+nothing is `{:ok, 0}`, not an error - a real-time cancel is allowed to lose a
+race with a timer that already fired.
+
+### Async invoke: capturing the authorization off the session
+
+The capture itself is a call to a payment processor: slow, retryable, and the
+one thing that must not happen twice. `use StatifierOban.Invoke.Handler` puts
+it in an Oban job and delivers completion back as `done.invoke.<invoke_id>`:
+
+```elixir
+defmodule MyApp.CaptureHandler do
+  use StatifierOban.Invoke.Handler
+
+  @impl StatifierOban.Invoke.Handler
+  def config, do: MyApp.statifier_oban_config()
+
+  @impl StatifierOban.Invoke.Handler
+  def run(invoke) do
+    # `invoke.invoke_id` is the idempotency key upstream hands you, stable by
+    # construction across replays. `params` carries an id, not the card.
+    with {:ok, capture} <-
+           MyApp.Payments.capture_by_invoke_id(invoke.invoke_id, invoke.params) do
+      {:ok, %{"capture_id" => capture.id}}
+    end
+  end
+end
+```
+
+The handler is registered per session, not globally, and the chart names it by
+type:
+
+```elixir
+{:ok, machine} = Statifier.compile(chart_xml)
+
+{:ok, session} =
+  Statifier.Session.start_link(machine,
+    invoke_handlers: %{
+      "myapp:authorize" => MyApp.AuthorizationHandler,
+      "myapp:capture" => MyApp.CaptureHandler
+    }
+  )
+
+{:ok, _subscriber} = MyApp.TimerSubscriber.start_link({session, config})
+```
+
+```xml
+<state id="capturing">
+  <invoke id="capture" type="myapp:capture"/>
+  <transition event="done.invoke.capture" target="settled"/>
+</state>
+```
+
+Entering `capturing` inserts one job into `:invoke_queue`, unique on
+`{scope, invoke_id, macrostep}` (ADR-0003) - a replayed drive conflicts with
+the stored job, while a genuine re-entry of the state (a retry loop in the
+chart) gets a fresh one. Leaving the state before the job runs cancels it.
+`run/1` executing twice is still possible, though: the job is at-least-once,
+so keying the write on `invoke.invoke_id` is the handler's own job and is not
+optional.
+
+### The same two seams in a signup wizard
+
+Nothing above is specific to card processing. A signup wizard with an A/B test
+across its variants uses the same two doors:
+
+- **Durable timer.** `<send id="nudge" event="signup.abandoned" delay="24h"/>`
+  on entry to a wizard step, `<cancel sendid="nudge"/>` on exit. The visitor
+  who leaves mid-wizard gets the follow-up a day later even though the node
+  that scheduled it was replaced by a deploy; the visitor who finishes the
+  step cancels it.
+- **Async invoke.** `<invoke type="myapp:signup">` with the step and the
+  assigned variant in `params`, so recording a conversion event happens off
+  the wizard's own progress. `invoke_id` keys the write, so a redelivery
+  records one conversion rather than two - which is the difference between an
+  A/B result and a fiction.
 
 ## The contract this package implements
 
