@@ -111,6 +111,40 @@ defmodule StatifierOban.Invoke.WorkerTest do
     assert %{failure: 1, success: 0, cancelled: 0} = drain()
   end
 
+  # sabotage: decode/1's {:invalid_codec, ...} clause was dropped, letting
+  # the catch-all cancel it - went red (cancelled: 1 instead of failure:
+  # 1), reverted.
+  test "a codec named on the row that this node cannot resolve retries, not cancels" do
+    never_seen = "Elixir.StatifierOban.NeverCompiledCodec#{:erlang.unique_integer([:positive])}"
+    insert_with_codec_tag("sess_iw_badcodec", "inv_badcodec", "params", never_seen)
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_badcodec", "inv_badcodec")
+
+    assert error =~ "invalid_codec"
+  end
+
+  # sabotage: decode/1's {:codec_failed, ...} clause was dropped, letting
+  # the catch-all cancel it - went red (cancelled: 1 instead of failure:
+  # 1), reverted.
+  test "a codec that fails to decode the row retries, not cancels" do
+    insert_with_codec_tag(
+      "sess_iw_codecfail",
+      "inv_codecfail",
+      "params",
+      "Elixir.StatifierOban.TestCodecs.Boom"
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_codecfail", "inv_codecfail")
+
+    assert error =~ "codec_failed"
+  end
+
   # sabotage: `Delivery.Session.deliver_if_running/3`'s halted arm
   # returned :delivered - went red ({:discarded, :done} stopped coming
   # back), reverted.
@@ -161,6 +195,17 @@ defmodule StatifierOban.Invoke.WorkerTest do
   defp insert!(args, opts \\ []) do
     {:ok, job} = Oban.insert(@oban_name, Worker.new(args, [queue: @queue] ++ opts))
     job
+  end
+
+  # Encodes plainly (no codec), then hand-tags one opaque field's payload
+  # with `codec_name` - proving the worker reads whatever tag the stored
+  # row carries, independent of how it got there.
+  defp insert_with_codec_tag(scope, invoke_id, field, codec_name) do
+    args = args_for(scope, invoke_id, TestInvokeHandler)
+    payload = Map.put(Map.fetch!(args, field), "codec", codec_name)
+    args = Map.put(args, field, payload)
+
+    insert!(args)
   end
 
   defp drain do

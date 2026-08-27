@@ -143,6 +143,47 @@ defmodule StatifierOban.Timer.WorkerTest do
     assert %{failure: 1, cancelled: 0} = drain(queue)
   end
 
+  # sabotage: decode/1's {:invalid_codec, ...} clause was dropped, letting
+  # the catch-all cancel it - went red (cancelled: 1 instead of failure:
+  # 1), reverted.
+  test "a codec named on the row that this node cannot resolve retries, not cancels",
+       %{queue: queue, scope: scope} do
+    never_seen = "Elixir.StatifierOban.NeverCompiledCodec#{:erlang.unique_integer([:positive])}"
+    %Oban.Job{id: id} = insert_with_codec_tag(queue, scope, "data", never_seen)
+
+    assert %{failure: 1, cancelled: 0, success: 0} = drain(queue)
+
+    assert %Oban.Job{state: "retryable", errors: [%{"error" => error}]} =
+             TestRepo.get!(Oban.Job, id)
+
+    assert error =~ "invalid_codec"
+  end
+
+  # sabotage: decode/1's {:codec_failed, ...} clause was dropped, letting
+  # the catch-all cancel it - went red (cancelled: 1 instead of failure:
+  # 1), reverted.
+  test "a codec that fails to decode the row retries, not cancels",
+       %{queue: queue, scope: scope} do
+    %Oban.Job{id: id} =
+      insert_with_codec_tag(queue, scope, "data", "Elixir.StatifierOban.TestCodecs.Boom")
+
+    assert %{failure: 1, cancelled: 0, success: 0} = drain(queue)
+
+    assert %Oban.Job{state: "retryable", errors: [%{"error" => error}]} =
+             TestRepo.get!(Oban.Job, id)
+
+    assert error =~ "codec_failed"
+  end
+
+  # sabotage: decode/1's catch-all clause was widened to retry instead of
+  # cancel - went red (failure: 1 instead of cancelled: 1), reverted. The
+  # codec-shaped clauses above must not swallow a genuinely corrupt row.
+  test "a genuinely corrupt row still cancels, not retries", %{queue: queue} do
+    {:ok, _job} = Oban.insert(@oban_name, Worker.new(%{"bogus" => true}, queue: queue))
+
+    assert %{cancelled: 1, failure: 0, success: 0} = drain(queue)
+  end
+
   defp drain(queue) do
     Oban.drain_queue(@oban_name, queue: queue, with_scheduled: true)
   end
@@ -155,18 +196,30 @@ defmodule StatifierOban.Timer.WorkerTest do
     job
   end
 
+  # Encodes the fixture plainly (no codec), then hand-tags one opaque
+  # field's payload with `codec_name` - proving the worker reads whatever
+  # tag the stored row carries, independent of how it got there.
+  defp insert_with_codec_tag(queue, scope, field, codec_name) do
+    {:ok, args} = JobArgs.from_effect(scope, fired_fixture(%{"probe" => "data"}))
+    payload = Map.put(Map.fetch!(args, field), "codec", codec_name)
+    args = Map.put(args, field, payload)
+
+    {:ok, job} = Oban.insert(@oban_name, Worker.new(args, queue: queue))
+    job
+  end
+
   defp start_session!(xml, scope) do
     {:ok, machine} = Statifier.compile(xml)
     {:ok, pid} = Statifier.start_session(machine, session_id: scope)
     pid
   end
 
-  defp fired_fixture do
+  defp fired_fixture(data \\ nil) do
     %SendDelayed{
       event: "reminder",
       target: nil,
       type: nil,
-      data: nil,
+      data: data,
       send_id: "send_1",
       delay_ms: 0,
       c_index: 0,

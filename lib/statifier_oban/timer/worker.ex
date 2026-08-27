@@ -32,6 +32,11 @@ defmodule StatifierOban.Timer.Worker do
     `{:discarded, reason}` recorded, the spec 6.2 discard as data;
   - an undecodable row cancels with `{:undecodable, reason}` - no number
     of retries makes a corrupt row decodable;
+  - a codec named on the row that this node cannot resolve, or one that
+    cannot decode the row right now, returns `{:error, {:invalid_codec,
+    _}}` or `{:error, {:codec_failed, _}}` and retries - an environment
+    fact, fixable by a deploy or by making the key available, not a fact
+    about the row;
   - a delivery module that cannot be resolved returns
     `{:error, {:invalid_delivery, _}}` and retries - an environment fact
     about the host's code, fixable by a deploy, unlike the row facts
@@ -63,10 +68,14 @@ defmodule StatifierOban.Timer.Worker do
   end
 
   @spec decode(JobArgs.args()) ::
-          {:ok, String.t(), Statifier.Effect.SendDelayed.t()} | {:cancel, term()}
+          {:ok, String.t(), Statifier.Effect.SendDelayed.t()}
+          | {:error, term()}
+          | {:cancel, term()}
   defp decode(args) do
     case JobArgs.to_effect(args) do
       {:ok, scope, effect} -> {:ok, scope, effect}
+      {:error, {:invalid_codec, _field, _name} = reason} -> {:error, reason}
+      {:error, {:codec_failed, _field, _codec, _reason} = reason} -> {:error, reason}
       {:error, reason} -> {:cancel, {:undecodable, reason}}
     end
   end
