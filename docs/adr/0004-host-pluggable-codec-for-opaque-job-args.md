@@ -1,6 +1,6 @@
 # ADR-0004: Host-pluggable codec for opaque job args
 
-Status: proposed (2026-08-27, sob-d7i)
+Status: accepted (2026-08-27, sob-d7i)
 
 ## Context
 

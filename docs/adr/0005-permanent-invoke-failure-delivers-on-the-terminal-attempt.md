@@ -1,6 +1,6 @@
 # ADR-0005: Permanent invoke failure delivers on the terminal attempt
 
-Status: proposed (2026-08-27, sob-nnh)
+Status: accepted (2026-08-27, sob-nnh)
 
 ## Context
 
