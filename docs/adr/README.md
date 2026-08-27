@@ -6,6 +6,7 @@
 | [0002](0002-host-supplied-oban-instance.md) | Host-supplied Oban instance; SQLite-backed test harness | accepted |
 | [0003](0003-macrostep-joins-the-invoke-job-dedup-key.md) | Macrostep joins the invoke job dedup key | accepted |
 | [0004](0004-host-pluggable-codec-for-opaque-job-args.md) | Host-pluggable codec for opaque job args | proposed |
+| [0005](0005-permanent-invoke-failure-delivers-on-the-terminal-attempt.md) | Permanent invoke failure delivers on the terminal attempt | proposed |
 
 New ADRs: next number, same three-section format (Context, Decision,
 Consequences). Pick the number against a freshly fetched remote. A bare

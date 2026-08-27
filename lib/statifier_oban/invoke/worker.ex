@@ -52,6 +52,12 @@ defmodule StatifierOban.Invoke.Worker do
     `invoke_id` by contract, so retrying is what at-least-once means; a
     raise or exit out of `run/1` (or the delivery module) retries the
     same way;
+  - the attempt that retries is the **last** one (`attempt` has reached
+    `max_attempts`, so Oban will discard rather than retry) -> the same
+    job outcome as above, plus `c:StatifierOban.Invoke.Delivery.deliver_failure/3`
+    on the way past, feeding `error.communication.invoke.<invoke_id>`
+    into the run behind the same liveness check a completion goes
+    through (st-ADR-0068, ADR-0005);
   - an undecodable row cancels with `{:undecodable, reason}` - no number
     of retries makes a corrupt row decodable;
   - a codec named on the row that this node cannot resolve, or one that
@@ -63,6 +69,28 @@ defmodule StatifierOban.Invoke.Worker do
     `{:error, {:invalid_handler, _}}` / `{:error, {:invalid_delivery, _}}`
     and retries - environment facts about the host's code, fixable by a
     deploy, unlike the row facts above.
+
+  ## Failure classes
+
+  The `:reason` string on a failure delivery is this package's
+  vocabulary to choose: st-ADR-0068 fixes the event and the payload
+  shape but interprets neither. Two classes are emitted, distinguishing
+  the two ways `run/1` can exhaust its retries:
+
+  - `"run_failed"` - the last attempt returned `{:error, reason}`.
+    `:detail` is that reason, inspected.
+  - `"run_crashed"` - the last attempt raised or exited. `:detail` is
+    the exception message, or the exit reason inspected.
+
+  `:attempts` is the job's `attempt` on the terminal try, which equals
+  its `max_attempts`.
+
+  Only `run/1`'s own exhaustion delivers. The environment errors above
+  (`:invalid_handler`, `:invalid_delivery`, `:invalid_codec`,
+  `:codec_failed`) retry and can in principle exhaust too, but they say
+  nothing about the invocation - they say the deploy is wrong - and
+  `:invalid_delivery` has by definition no seam to deliver through.
+  ADR-0005 records that limit rather than leaving it to be inferred.
   """
 
   use Oban.Worker,
@@ -78,15 +106,32 @@ defmodule StatifierOban.Invoke.Worker do
   @default_delivery StatifierOban.Invoke.Delivery.Session
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args, meta: meta}) do
+  def perform(%Oban.Job{args: args, meta: meta} = job) do
     with {:ok, scope, handler_name, invoke} <- decode(args),
-         {:ok, handler} <- resolve_module(handler_name, :run, 1, :invalid_handler),
-         {:ok, delivery} <- delivery_module(meta),
-         {:ok, donedata} <- run(handler, invoke) do
-      case delivery.deliver(scope, invoke.invoke_id, donedata) do
-        :delivered -> :ok
-        {:discarded, reason} -> {:cancel, {:discarded, reason}}
-      end
+         {:ok, handler} <- resolve_module(handler_name, [run: 1], :invalid_handler),
+         {:ok, delivery} <- delivery_module(meta) do
+      execute(job, delivery, scope, handler, invoke)
+    end
+  end
+
+  @spec execute(
+          Oban.Job.t(),
+          module(),
+          String.t(),
+          module(),
+          Statifier.Effect.Invoke.t()
+        ) :: :ok | {:cancel, term()} | {:error, term()}
+  defp execute(job, delivery, scope, handler, invoke) do
+    case run(job, delivery, scope, handler, invoke) do
+      {:ok, donedata} ->
+        case delivery.deliver(scope, invoke.invoke_id, donedata) do
+          :delivered -> :ok
+          {:discarded, reason} -> {:cancel, {:discarded, reason}}
+        end
+
+      {:error, {:run_failed, reason}} = failed ->
+        maybe_fail(job, delivery, scope, invoke.invoke_id, "run_failed", inspect(reason))
+        failed
     end
   end
 
@@ -103,14 +148,82 @@ defmodule StatifierOban.Invoke.Worker do
     end
   end
 
-  @spec run(module(), Statifier.Effect.Invoke.t()) ::
-          {:ok, term()} | {:error, {:run_failed, term()}}
-  defp run(handler, invoke) do
+  # The rescue/catch arms do not change what a crash out of `run/1` does
+  # to the job - the original is re-raised with its own stacktrace, so
+  # the retry, the discard and the recorded error are all exactly what
+  # they were. They exist only so the terminal attempt gets to tell the
+  # run about the failure on its way past: a handler that raises
+  # exhausts its retries just as permanently as one returning
+  # `{:error, reason}`, and a chart parked on `error.communication`
+  # would otherwise hang forever on the commonest failure of all.
+  @spec run(
+          Oban.Job.t(),
+          module(),
+          String.t(),
+          module(),
+          Statifier.Effect.Invoke.t()
+        ) :: {:ok, term()} | {:error, {:run_failed, term()}}
+  defp run(job, delivery, scope, handler, invoke) do
     case handler.run(invoke) do
       {:ok, donedata} -> {:ok, donedata}
       {:error, reason} -> {:error, {:run_failed, reason}}
     end
+  rescue
+    exception ->
+      maybe_fail(
+        job,
+        delivery,
+        scope,
+        invoke.invoke_id,
+        "run_crashed",
+        Exception.message(exception)
+      )
+
+      reraise exception, __STACKTRACE__
+  catch
+    :exit, reason ->
+      detail = "exited: #{inspect(reason)}"
+      maybe_fail(job, delivery, scope, invoke.invoke_id, "run_crashed", detail)
+      exit(reason)
   end
+
+  # Oban has no "this job is being discarded" callback, so the terminal
+  # attempt is recognized from the job row itself: `attempt` is stamped
+  # before `perform/1` runs, and reaching `max_attempts` is precisely
+  # what turns the coming error into a discard rather than a retry.
+  # Non-terminal failures deliver nothing - a retry that will be tried
+  # again is not a fact the chart should hear about.
+  #
+  # A `{:discarded, _}` from the seam is the ordinary case of a run that
+  # died before its invocation gave up; there is nothing to do about it
+  # and nothing to retry, since the job is discarded either way.
+  @spec maybe_fail(
+          Oban.Job.t(),
+          module(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t()
+        ) :: :ok
+  defp maybe_fail(
+         %Oban.Job{attempt: attempt, max_attempts: max_attempts},
+         delivery,
+         scope,
+         invoke_id,
+         reason,
+         detail
+       )
+       when attempt >= max_attempts do
+    delivery.deliver_failure(scope, invoke_id,
+      reason: reason,
+      attempts: attempt,
+      detail: detail
+    )
+
+    :ok
+  end
+
+  defp maybe_fail(_job, _delivery, _scope, _invoke_id, _reason, _detail), do: :ok
 
   # The meta value is a module name written by the base handler from a
   # validated `Config`, so resolution failures are deploy-shaped: the
@@ -120,23 +233,37 @@ defmodule StatifierOban.Invoke.Worker do
   @spec delivery_module(map()) :: {:ok, module()} | {:error, {:invalid_delivery, term()}}
   defp delivery_module(meta) do
     case Map.get(meta, "delivery") do
-      nil -> {:ok, @default_delivery}
-      name when is_binary(name) -> resolve_module(name, :deliver, 3, :invalid_delivery)
-      other -> {:error, {:invalid_delivery, other}}
+      nil ->
+        {:ok, @default_delivery}
+
+      name when is_binary(name) ->
+        resolve_module(name, [deliver: 3, deliver_failure: 3], :invalid_delivery)
+
+      other ->
+        {:error, {:invalid_delivery, other}}
     end
   end
 
+  # Both seam doors are required, and a module exporting only `deliver/3`
+  # is unresolvable rather than half-usable: that is a host whose
+  # delivery module predates st-ADR-0068, and `:invalid_delivery`
+  # already means "an environment fact about the host's code, fixable by
+  # a deploy". Resolving it and discovering the gap only at exhaustion
+  # would trade a retry the host can fix for a lost failure event it
+  # cannot.
   @spec resolve_module(
           String.t(),
-          atom(),
-          non_neg_integer(),
+          keyword(non_neg_integer()),
           :invalid_handler | :invalid_delivery
         ) ::
           {:ok, module()} | {:error, {:invalid_handler | :invalid_delivery, term()}}
-  defp resolve_module(name, function, arity, error_tag) do
+  defp resolve_module(name, exports, error_tag) do
     module = String.to_existing_atom(name)
 
-    if Code.ensure_loaded?(module) and function_exported?(module, function, arity) do
+    if Code.ensure_loaded?(module) and
+         Enum.all?(exports, fn {function, arity} ->
+           function_exported?(module, function, arity)
+         end) do
       {:ok, module}
     else
       {:error, {error_tag, name}}

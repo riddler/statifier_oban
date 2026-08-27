@@ -86,10 +86,21 @@ defmodule StatifierOban.MixProject do
   # Export STATIFIER_PATH to point at a local checkout while co-developing a
   # change that spans both repos. It is an env var rather than a mix.exs edit
   # so the override never lands in a commit by accident.
+  #
+  # The default is a temporary git ref, not a Hex requirement:
+  # `Statifier.Session.failed_invocation/3` (st-ADR-0068) is the door
+  # `StatifierOban.Invoke.Delivery.Session.deliver_failure/3` calls, and it
+  # is on statifier-ex `main` only - the newest published Hex release does
+  # not carry it. Re-pin to a Hex requirement (`{:statifier, "~> 2.1.2"}`)
+  # as soon as a release carrying that door is published.
   defp statifier_dep do
     case System.get_env("STATIFIER_PATH") do
-      nil -> {:statifier, "~> 2.0"}
-      path -> {:statifier, path: path, override: true}
+      nil ->
+        {:statifier,
+         github: "riddler/statifier-ex", ref: "7ee21aaf6a72537a3e363e9d913597e7a9dc10a5"}
+
+      path ->
+        {:statifier, path: path, override: true}
     end
   end
 end
