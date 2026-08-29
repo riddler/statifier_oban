@@ -1,6 +1,6 @@
 # ADR-0005: Permanent invoke failure delivers on the terminal attempt
 
-Status: accepted (2026-08-27, sob-nnh)
+Status: accepted (2026-08-27, sob-nnh) - amended 2026-08-29 (sob-aty, PR 40: decision 6 narrowed, undecodable-payload arm delivers)
 
 ## Context
 
@@ -130,7 +130,7 @@ is a host that needs to revive discarded invoke jobs that way.
 
 ## Amendment (2026-08-29): the undecodable-payload arm delivers through the door
 
-Status: proposed
+Status: accepted (2026-08-29, unqualified direction-agent verdict under the operator campaign-015 grant, sob-aty, PR 40)
 
 Decision 6 above says:
 
@@ -152,7 +152,7 @@ caller. That code has landed here, so decision 6's text is now narrower than
 what this package does. This amendment records the difference; it adds to
 decision 6 and revises nothing else in this record.
 
-### Proposed decision
+### Decision
 
 **The undecodable-invoke-payload arm delivers through the door, on the
 attempt that finds it.** When `JobArgs.to_invoke/1` fails in a way that
