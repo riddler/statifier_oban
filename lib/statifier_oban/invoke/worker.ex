@@ -59,7 +59,12 @@ defmodule StatifierOban.Invoke.Worker do
     into the run behind the same liveness check a completion goes
     through (st-ADR-0068, ADR-0005);
   - an undecodable row cancels with `{:undecodable, reason}` - no number
-    of retries makes a corrupt row decodable;
+    of retries makes a corrupt row decodable - and delivers
+    `c:StatifierOban.Invoke.Delivery.deliver_failure/3` on the way past,
+    through the same liveness-checked door, whenever the row still
+    yields the two plain-string identity fields; a row whose `scope` or
+    `invoke_id` are themselves undecodable names nobody to tell, so it
+    cancels with no delivery, exactly as it always did;
   - a codec named on the row that this node cannot resolve, or one that
     cannot decode the row right now, returns `{:error, {:invalid_codec,
     _}}` or `{:error, {:codec_failed, _}}` and retries - an environment
@@ -74,18 +79,25 @@ defmodule StatifierOban.Invoke.Worker do
 
   The `:reason` string on a failure delivery is this package's
   vocabulary to choose: st-ADR-0068 fixes the event and the payload
-  shape but interprets neither. Two classes are emitted, distinguishing
-  the two ways `run/1` can exhaust its retries:
+  shape but interprets neither. Three classes are emitted - the two ways
+  `run/1` can exhaust its retries, and the one way a job is over before
+  `run/1` is ever reached:
 
   - `"run_failed"` - the last attempt returned `{:error, reason}`.
     `:detail` is that reason, inspected.
   - `"run_crashed"` - the last attempt raised or exited. `:detail` is
     the exception message, or the exit reason inspected.
+  - `"undecodable"` - the stored row could not be rebuilt into an
+    effect, so the job cancels rather than retrying. `:detail` is the
+    typed decode error, inspected.
 
-  `:attempts` is the job's `attempt` on the terminal try, which equals
-  its `max_attempts`.
+  `:attempts` is the job's `attempt` on the try that gave up. For the
+  two `run/1` classes that is the terminal attempt, which equals
+  `max_attempts`; for `"undecodable"` it is the attempt that found the
+  corrupt row, because that attempt cancels and there is no later one.
 
-  Only `run/1`'s own exhaustion delivers. The environment errors above
+  Of the failures that are *not* about the row, only `run/1`'s own
+  exhaustion delivers. The environment errors above
   (`:invalid_handler`, `:invalid_delivery`, `:invalid_codec`,
   `:codec_failed`) retry and can in principle exhaust too, but they say
   nothing about the invocation - they say the deploy is wrong - and
@@ -111,6 +123,13 @@ defmodule StatifierOban.Invoke.Worker do
          {:ok, handler} <- resolve_module(handler_name, [run: 1], :invalid_handler),
          {:ok, delivery} <- delivery_module(meta) do
       execute(job, delivery, scope, handler, invoke)
+    else
+      {:cancel, {:undecodable, reason}} = cancel ->
+        fail_undecodable(job, reason)
+        cancel
+
+      other ->
+        other
     end
   end
 
@@ -146,6 +165,37 @@ defmodule StatifierOban.Invoke.Worker do
       {:error, {:codec_failed, _field, _codec, _reason} = reason} -> {:error, reason}
       {:error, reason} -> {:cancel, {:undecodable, reason}}
     end
+  end
+
+  # The failure delivery for an undecodable row, which `maybe_fail/6`
+  # cannot carry: that function delivers only on the terminal attempt,
+  # and an undecodable row never reaches one - it cancels on the attempt
+  # that found it, because no number of retries makes a corrupt row
+  # decodable. So this attempt *is* the terminal one, and `:attempts` is
+  # its own `attempt` rather than `max_attempts`. It is the same seam and
+  # the same liveness-checked door either way, and the cancel the caller
+  # returns is unchanged - the delivery happens on the way past.
+  #
+  # The identity fields are read on their own because they are what an
+  # opaque payload's corruption does not touch: a row whose `params`
+  # blob will not decode still names its run and its invocation, and a
+  # chart parked on `error.communication` would otherwise hang on it
+  # forever. When `scope` or `invoke_id` are themselves undecodable
+  # there is no door - the row names nobody to tell - and the `with`
+  # falls through to the bare cancel, which is exactly the old
+  # behaviour. An unresolvable delivery module is the same dead end.
+  @spec fail_undecodable(Oban.Job.t(), term()) :: :ok
+  defp fail_undecodable(%Oban.Job{args: args, meta: meta, attempt: attempt}, reason) do
+    with {:ok, scope, invoke_id} <- JobArgs.identity(args),
+         {:ok, delivery} <- delivery_module(meta) do
+      delivery.deliver_failure(scope, invoke_id,
+        reason: "undecodable",
+        attempts: attempt,
+        detail: inspect(reason)
+      )
+    end
+
+    :ok
   end
 
   # The rescue/catch arms do not change what a crash out of `run/1` does

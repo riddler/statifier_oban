@@ -323,6 +323,69 @@ defmodule StatifierOban.Invoke.WorkerTest do
              Delivery.Session.deliver_failure(scope, "inv_halted", reason: "run_failed")
   end
 
+  # sabotage: `perform/1`'s undecodable else-arm dropped the
+  # `fail_undecodable/2` call and only returned the cancel - went red
+  # (the seam message never arrived, mailbox empty), reverted.
+  test "an undecodable payload reports through the seam before the row cancels" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    args =
+      "sess_iw_undecodable"
+      |> args_for("inv_undecodable", TestInvokeHandler)
+      |> Map.put("params", %{"t2b64" => Base.encode64("not an external term")})
+
+    %Oban.Job{id: id} =
+      insert!(args,
+        meta: %{"delivery" => Atom.to_string(RecordingDelivery)},
+        max_attempts: 5
+      )
+
+    assert %{cancelled: 1, failure: 0, success: 0} = drain()
+
+    assert_received {:failed_via_seam, "sess_iw_undecodable", "inv_undecodable", failure}
+    assert failure[:reason] == "undecodable"
+    assert failure[:detail] =~ "invalid_field"
+
+    # The attempt that found the corrupt row is the terminal one, so
+    # `:attempts` is that attempt and not the `max_attempts` of 5 this
+    # job will never reach.
+    assert failure[:attempts] == 1
+
+    # The job outcome is untouched by the delivery: still the same
+    # cancel, carrying the same row fact.
+    assert %Oban.Job{state: "cancelled", errors: [%{"error" => error}]} =
+             TestRepo.get!(Oban.Job, id)
+
+    assert error =~ "undecodable"
+  end
+
+  # sabotage: `JobArgs.identity/1` returned `{:ok, Map.get(args, "scope"),
+  # Map.get(args, "invoke_id")}` unconditionally instead of going through
+  # `fetch_binary/2` - went red (the door was called with a nil scope),
+  # reverted.
+  test "a row whose identity fields are undecodable cancels with nobody to tell" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    args =
+      "sess_iw_noidentity"
+      |> args_for("inv_noidentity", TestInvokeHandler)
+      |> Map.delete("scope")
+
+    %Oban.Job{id: id} =
+      insert!(args, meta: %{"delivery" => Atom.to_string(RecordingDelivery)})
+
+    assert %{cancelled: 1, failure: 0, success: 0} = drain()
+
+    # No scope means no run to name, so there is no door to call - and
+    # reaching for one anyway would be a delivery to nowhere.
+    refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
+
+    assert %Oban.Job{state: "cancelled", errors: [%{"error" => error}]} =
+             TestRepo.get!(Oban.Job, id)
+
+    assert error =~ "undecodable"
+  end
+
   # -- helpers ------------------------------------------------------------
 
   defp args_for(scope, invoke_id, handler) do
