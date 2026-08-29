@@ -127,3 +127,76 @@ already delivered a failure event for an invocation that then succeeds; the
 chart would see the error event and, later, the completion. That is a
 deliberate limit rather than an oversight, and the reopen trigger for this ADR
 is a host that needs to revive discarded invoke jobs that way.
+
+## Amendment (2026-08-29): the undecodable-payload arm delivers through the door
+
+Status: proposed
+
+Decision 6 above says:
+
+> **6. Only `run/1`'s own exhaustion delivers.**
+
+and, of the remaining case:
+
+> Codec decode failure that *cancels* rather than retries is a separate
+> question tracked upstream as st-uumw, and is deliberately not wired into
+> this door here.
+
+st-uumw has since been decided. statifier-ex's st-ADR-0068 carries a dated
+decision note (2026-08-29) ruling that a permanently undecodable stored
+payload is that record's own failure family rather than a new one: the host's
+retry layer reports it through `Statifier.Session.failed_invocation/3` with
+`"reason"` spelled `"undecodable"`, and no new event name, function or error
+family is created. The note names `StatifierOban.Invoke.Worker` as the first
+caller. That code has landed here, so decision 6's text is now narrower than
+what this package does. This amendment records the difference; it adds to
+decision 6 and revises nothing else in this record.
+
+### Proposed decision
+
+**The undecodable-invoke-payload arm delivers through the door, on the
+attempt that finds it.** When `JobArgs.to_invoke/1` fails in a way that
+cancels the job rather than retrying it, `perform/1` calls
+`deliver_failure/3` before returning the cancel, with `reason` `"undecodable"`
+(the spelling st-ADR-0068's note pins), `attempts` the job's own `attempt`,
+and `detail` the inspected codec error. The cancel the worker returns is
+unchanged, so the job's state and recorded error stay what they were; the
+delivery happens on the way past, exactly as decision 1 describes for the
+terminal attempt.
+
+**`attempts` is that attempt, not `max_attempts`.** Decision 1 recognizes the
+terminal attempt as `attempt >= max_attempts`, and `maybe_fail/6` still
+delivers only there. An undecodable row never reaches that condition and
+should not: no number of retries makes a corrupt row decodable, so the attempt
+that discovers it *is* the invocation's last one. Delivering the count the job
+actually ran keeps `attempts` meaning "how many attempts this invocation got",
+which is what it means on the `"run_failed"` and `"run_crashed"` arms too.
+
+**Two arms remain bare cancels, and for the same reason decision 6 gives.**
+A row whose `scope` or `invoke_id` are themselves undecodable names nobody to
+tell: there is no run and no invocation to address the event to, so it cancels
+without the door, unchanged. An unresolvable delivery module is decision 5's
+`:invalid_delivery` - by definition no seam to deliver through - and likewise
+cancels bare. The environment errors decision 6 lists (`:invalid_handler`,
+`:invalid_codec`, `:codec_failed`) still retry and still deliver nothing:
+they say the deploy is wrong, not that the invocation is over.
+
+**Not decided here: the timer half.** Whether an undecodable *delayed-send*
+payload has an analogous report is untouched by this amendment.
+`StatifierOban.Timer.Worker`'s equivalent arm is unchanged, and st-ADR-0068's
+note leaves the same question open upstream (filed there as st-i7y8). Nothing
+above should be read as deciding it.
+
+### Consequences of the amendment
+
+A chart parked on `error.communication` no longer hangs on an invocation whose
+stored payload rotted: the corruption of an opaque `params` blob does not
+touch the two plain-string identity fields, so the run can still be told. That
+is the only behavior this amendment adds.
+
+`:detail` stays a string (decision 4), here the inspected codec error rather
+than the typed term, for the serialization reason decision 4 already gives.
+
+The reopen trigger is a host that needs an undecodable row to retry rather
+than cancel - that would put the arm back under `maybe_fail/6`'s terminal-
+attempt rule and make this amendment wrong.
