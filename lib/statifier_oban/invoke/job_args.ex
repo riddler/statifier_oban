@@ -128,6 +128,29 @@ defmodule StatifierOban.Invoke.JobArgs do
     end
   end
 
+  @doc """
+  Rebuilds just the identity pair - the scope and the invoke id - from a
+  job's args.
+
+  `to_invoke/1` fails the whole row when any field is undecodable,
+  including the two host-opaque payloads, which is the common way a row
+  goes bad. This reads only the two plain-string fields that *name* the
+  invocation, so a caller holding an otherwise undecodable row can still
+  tell the run which invocation it is about
+  (`StatifierOban.Invoke.Worker` delivers `error.communication` that
+  way before cancelling). The rules are `to_invoke/1`'s own, because
+  this is the same `fetch_binary/2`: a missing, empty, or non-string
+  field is a typed error, and then the row names nothing and there is
+  nobody to tell.
+  """
+  @spec identity(args()) :: {:ok, String.t(), String.t()} | {:error, decode_error()}
+  def identity(args) when is_map(args) do
+    with {:ok, scope} <- fetch_binary(args, "scope"),
+         {:ok, invoke_id} <- fetch_binary(args, "invoke_id") do
+      {:ok, scope, invoke_id}
+    end
+  end
+
   # -- opaque terms: tagged term_to_binary payloads, shared with
   # `StatifierOban.Timer.JobArgs` so both job kinds' rows stay mutually
   # readable during an incident.
