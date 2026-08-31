@@ -10,6 +10,14 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.3.2] 2026-08-31
+
+### Fixed
+
+- A base handler's cancel no longer cancels an invoke job that is already
+  executing, so an invocation whose own completion exits its invoking state is
+  no longer killed mid-delivery by that state's `<cancel>`.
+
 ## [0.3.1] 2026-08-31
 
 ### Changed
