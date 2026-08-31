@@ -97,13 +97,32 @@ defmodule StatifierOban.Timer do
   an error - the same shape as `Timers.take/2`'s `{[], timers}` in
   statifier-ex.
 
-  A cancel racing job execution resolves to whichever transition commits
-  first, and stays resolved: `Oban.cancel_all_jobs/2` cancels any matched
-  job still in a non-terminal state - an `executing` one is killed - while
-  a job that already reached a terminal state keeps its outcome and is not
-  counted. That is spec-faithful: a real-time `<cancel>` can lose to a
-  timer that already fired, and sob-2hx.5's run-liveness check at delivery
-  is the guard on that side, not this one.
+  **A cancel only ever reaches a timer that has not fired.** The match is
+  restricted to the states a pending timer can be in - `suspended`,
+  `scheduled`, `available`, `retryable` - so a job that is `executing`
+  right now is never swept, and neither is one that already reached a
+  terminal state. Both stay out for the same reason: the timer has fired,
+  and a cancel that arrives after the fire loses the race. That is
+  spec-faithful - a real-time `<cancel>` can lose to a timer that already
+  fired - and the run-liveness check the delivery seam owes (st-ADR-0054
+  decision 4) is the guard on that side, not this one.
+
+  Leaving `executing` out is what makes the common self-cancel safe.
+  A fired timer's delivery routinely drives the chart out of the state
+  that armed it, which runs that state's `onexit` `<cancel>` for the very
+  `send_id` being delivered - so the cancel and the delivery are the same
+  job. Sweeping `executing` here would have `Oban.cancel_all_jobs/2`
+  signal a `:pkill` at the delivery's own process and kill the step
+  mid-flight, leaving the row `cancelled` with `{:cancel, :shutdown}` and
+  the run's progress unpersisted (sob-uon, found downstream on the Lite
+  engine). A cancel raised from inside a job's own delivery must not kill
+  that delivery.
+
+  Cancelling a genuinely in-flight delivery from outside is therefore not
+  offered. A host that needs it holds the job id and can call
+  `Oban.cancel_job/2` itself; this package will not do it blind, because
+  from the query's side the self-cancel and the outside cancel are
+  indistinguishable.
 
   The match ignores the queue, exactly as the dedup key's uniqueness does:
   a host that moved its timers queue can still cancel jobs stored under
@@ -117,12 +136,27 @@ defmodule StatifierOban.Timer do
     end
   end
 
+  # Every non-terminal state except `executing` - the states a timer that
+  # has not fired can be in. `executing` is deliberately absent: see
+  # `cancel/3`'s docs - a delivery that cancels its own send_id would
+  # otherwise pkill itself (sob-uon). The terminal states are excluded by
+  # `Oban.cancel_all_jobs/2` anyway; naming the set positively here keeps
+  # the whole rule readable in one place, and `suspended` earns its place
+  # because a held job has not fired and would fire on resume.
+  #
+  # The list is literal rather than derived from `Oban.Job.states/1` so
+  # the package keeps compiling across the whole `~> 2.19` range. A new
+  # Oban state is therefore a review point here, which
+  # `StatifierOban.Timer.CancellableStatesTest` pins.
+  @cancellable_states ~w(suspended scheduled available retryable)
+
   @spec timer_jobs(CancellationKey.t()) :: Ecto.Query.t()
   defp timer_jobs(%CancellationKey{scope: scope, send_id: send_id}) do
     worker = Oban.Worker.to_string(Worker)
 
     Oban.Job
     |> where([j], j.worker == ^worker)
+    |> where([j], j.state in @cancellable_states)
     |> where([j], j.args["scope"] == ^scope and j.args["send_id"] == ^send_id)
   end
 end
