@@ -41,7 +41,7 @@ defmodule StatifierOban.Invoke.Handler do
     macrostep. Both are idempotent by construction: the unique key makes
     a replayed insert conflict with the stored job (the same scheduling
     decision, not a new one), and a replayed cancel
-    matches only jobs still in a non-terminal state. That uniqueness is
+    matches only jobs that have not run yet. That uniqueness is
     what this module enforces; what your `run/1` does with the outside
     world is yours to make idempotent the same way.
   - **`run/1` is your work**, executed inside the Oban job - at least
@@ -253,6 +253,31 @@ defmodule StatifierOban.Invoke.Handler do
   host may replay a cancel whose start it never durably recorded) is a
   no-op, never an error. The match ignores the queue, exactly as the
   unique key does.
+
+  **A cancel only ever reaches a job that has not run.** The match is
+  restricted to the states a pending invocation can be in - `suspended`,
+  `scheduled`, `available`, `retryable` - so a job that is `executing`
+  right now is never swept, and neither is one that already reached a
+  terminal state.
+
+  Leaving `executing` out is what makes the common self-cancel safe, for
+  the same reason it does on the timer half (`StatifierOban.Timer.cancel/3`,
+  sob-uon). Spec 6.4.3 cancels an invocation when its invoking state is
+  exited, and the commonest way that state is exited is the invocation's
+  own completion: the job delivers `done.invoke.<invoke_id>`, the run
+  transitions out, and the exit runs `<cancel>` for the very `invoke_id`
+  being delivered - so the cancel and the invocation are the same Oban
+  job. Sweeping `executing` rows here would have
+  `Oban.cancel_all_jobs/2` signal a `:pkill` at that job's own process
+  and kill it mid-delivery, leaving the row `cancelled` with
+  `{:cancel, :shutdown}`. A cancel raised from inside a job's own
+  execution must not kill that execution.
+
+  Cancelling a genuinely in-flight invocation from outside is therefore
+  not offered, exactly as it is not for timers: from the query's side
+  the self-cancel and the outside cancel are indistinguishable, and a
+  host that needs it holds the job id and can call `Oban.cancel_job/2`
+  itself.
   """
   @spec perform_cancel(module(), String.t(), UpstreamHandler.ctx()) ::
           :ok | {:error, perform_error()}
@@ -265,12 +290,28 @@ defmodule StatifierOban.Invoke.Handler do
     end
   end
 
+  # Every non-terminal state except `executing` - the states an invoke
+  # job that has not run can be in. `executing` is deliberately absent:
+  # see `perform_cancel/3`'s docs - a job whose own delivery drives the
+  # exit that cancels it would otherwise pkill itself (sob-84c, the
+  # invoke half of sob-uon). The terminal states are excluded by
+  # `Oban.cancel_all_jobs/2` anyway; naming the set positively here keeps
+  # the whole rule readable in one place, and `suspended` earns its place
+  # because a held job has not run and would run on resume.
+  #
+  # The list is literal rather than derived from `Oban.Job.states/1` so
+  # the package keeps compiling across the whole `~> 2.19` range. A new
+  # Oban state is therefore a review point here, which
+  # `StatifierOban.Invoke.CancellableStatesTest` pins.
+  @cancellable_states ~w(suspended scheduled available retryable)
+
   @spec invoke_jobs(String.t(), String.t()) :: Ecto.Query.t()
   defp invoke_jobs(scope, invoke_id) do
     worker = Oban.Worker.to_string(Worker)
 
     Oban.Job
     |> where([j], j.worker == ^worker)
+    |> where([j], j.state in @cancellable_states)
     |> where([j], j.args["scope"] == ^scope and j.args["invoke_id"] == ^invoke_id)
   end
 
