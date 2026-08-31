@@ -10,6 +10,21 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.3.1] 2026-08-31
+
+### Changed
+
+- An undecodable invoke job now reports `error.communication.invoke.<invoke_id>`
+  through the delivery seam before cancelling, whenever its row still names a
+  scope and an invoke id, so a chart parked on `error.communication` no longer
+  hangs on a corrupt row.
+
+### Fixed
+
+- `StatifierOban.Timer.cancel/3` no longer cancels a timer job that is already
+  executing, so a fired timer whose delivery exits the state that armed it is
+  no longer killed mid-step by its own `onexit` `<cancel>`.
+
 ## [0.3.0] 2026-08-27
 
 ### Added
