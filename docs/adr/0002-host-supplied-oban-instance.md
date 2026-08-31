@@ -66,3 +66,29 @@ it does not replace this one.
   this package relies on (insert, uniqueness, draining, cancellation) are
   supported by both; any divergence found gets a bead and, if needed, the
   side-by-side Postgres harness above.
+
+## Note (2026-08-31): the first downstream host runs the Lite engine too
+
+The harness choice in the Decision above was made with no host to check it
+against. There is one now:
+[statifier_examples](https://github.com/riddler/statifier_examples), a public
+example application, runs an abandoned-signup reminder on this package over
+`Oban.Engines.Lite` and `ecto_sqlite3` - arming a delayed send, cancelling
+it, letting it fire, and delivering the fired event into a run that is
+rebuilt from storage rather than held in a process - with no host-side
+workarounds.
+
+It supplies exactly what the Decision says a host supplies: its own named
+Oban instance on the Lite engine (with a matching notifier, since SQLite has
+no `LISTEN/NOTIFY` for the default one), Oban's migration against its own
+repo, and - having no session process to look up - its own
+`StatifierOban.Timer.Delivery` implementation, answering liveness from the
+stored run.
+
+This retires nothing above it. The risk recorded under Consequences stands
+unchanged: the Lite engine is still not byte-for-byte the Basic (Postgres)
+engine, and no side-by-side comparison has been run. What the evidence adds
+is narrower and worth having anyway - the behaviors this package relies on
+(insert, uniqueness, draining, cancellation, and a fired job delivering
+into a run reconstructed from storage) hold on Lite outside this repo's own
+suite as well as inside it.

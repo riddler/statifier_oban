@@ -45,6 +45,27 @@ event vocabulary is statifier-ex's to decide, so the semantics are being
 finalized upstream and this package documents the gap rather than inventing an
 event for it. See `StatifierOban.Invoke.Handler`'s moduledoc.
 
+Beyond this package's own suite, the shape is exercised downstream:
+[statifier_examples](https://github.com/riddler/statifier_examples), a public
+example application, runs an abandoned-signup reminder on `Oban.Engines.Lite`
+end to end - arming a delayed send, cancelling it, letting it fire, and
+delivering the fired event into a run that is rebuilt from storage rather
+than held in a process - with no host-side workarounds. Nothing in that is
+engine-specific. This package never owns, starts, or names an Oban instance
+(ADR-0002), so the engine stays the host's choice; what the host supplies is
+the ordinary host-side contract:
+
+- its own Oban instance, configured on whichever engine it wants (that app
+  names `Oban.Engines.Lite`, and a matching notifier with it, because SQLite
+  has no `LISTEN/NOTIFY` for the default one to use);
+- Oban's own migration, run against the host's repo - this package ships
+  none;
+- a `StatifierOban.Timer.Delivery` implementation, where the default
+  session-registry one does not fit. That app keeps its runs in storage
+  rather than in session processes, so its delivery answers the liveness
+  question from the stored run's status and feeds the fired event back as
+  one more drive.
+
 ## A worked example
 
 Two things have to be true before any of this runs: the host owns an Oban
