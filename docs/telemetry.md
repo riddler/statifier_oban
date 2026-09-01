@@ -192,13 +192,16 @@ Emitted on the Oban worker process, inside the job.
 time a timer actually fired is the number a durable timer most wants to make
 answerable, and it is tempting to compute it as `utc_now` minus the job's
 `scheduled_at`. Oban already publishes exactly that: `:queue_time` on
-`[:oban, :job, :stop]` is `attempted_at - scheduled_at` in nanoseconds
-(`Oban.Queue.Executor`), which is the same subtraction against the same two
-timestamps. Emitting it again would be the duplication this whole contract
-exists to avoid. The one caveat belongs to Oban either way: on a retried job
-`scheduled_at` has been rewritten by the backoff, so on any attempt past the
-first, both numbers measure the backoff rather than the original lateness,
-and the original due time is no longer on the row for anyone to recover.
+`[:oban, :job, :stop]` is `attempted_at - scheduled_at` computed in
+nanoseconds (`Oban.Queue.Executor.record_finished/1`), which is the same
+subtraction against the same two timestamps. Emitting it again would be the
+duplication this whole contract exists to avoid. Read the measurement as
+`:native` time units, not as nanoseconds: the executor converts before
+emitting, the same way it does for `:duration`. The one caveat belongs to
+Oban either way: on a retried job `scheduled_at` has been rewritten by the
+backoff, so on any attempt past the first, both numbers measure the backoff
+rather than the original lateness, and the original due time is no longer on
+the row for anyone to recover.
 
 `reason` on the two `:discarded` events is the delivery seam's
 `t:discard_reason/0` - `:terminated` for no live run, or the halted run's own
