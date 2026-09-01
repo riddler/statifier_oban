@@ -301,14 +301,12 @@ What the events are built to let the bridge do:
   was attached, and a fire with no context is simply an unlinked span - the
   standard detached case, not an error.
 
-- **Restoring the context at fire time is not specified here.** What shape a
-  `caller_context` carrying an OTel span context actually has, who puts it
-  there, and how the bridge turns it back into a link are `sob-v28`'s
-  (mirroring the closed `st-yoi0`). This note fixes only the seam: the field
-  is on the effect, it round-trips through the job args untouched, it is
-  restored onto the fired effect by `StatifierOban.Timer.Delivery.Session`,
-  and it is on the delivery-seam telemetry events. Whatever `sob-v28`
-  decides, it decides inside that seam without moving it.
+- **Restoring the context at fire time happens inside that seam**, and the
+  section below says how (`sob-v28`, mirroring the closed `st-yoi0`). This
+  note fixes the seam itself: the field is on the effect, it round-trips
+  through the job args untouched, it is restored onto the fired event by
+  `StatifierOban.Timer.Delivery.fired_event/2`, and it is on the
+  delivery-seam telemetry events.
 
 - **`trigger` is a pass-through string.** No event here originates one, but
   where one is carried onward it is copied and never validated against an
@@ -324,6 +322,53 @@ What the events are built to let the bridge do:
   that every config option is a seam a host must state explicitly. Upstream's
   `trace: true` sampling knob has no counterpart here: none of these events
   scale with microstep count, so there is nothing to gate.
+
+### Restoring the caller's trace context
+
+A timer armed inside a request and fired three days later is only one trace
+if something carries the request's trace identity across the gap. That
+something is `caller_context`, and this is the whole of what each party owes.
+
+**The host writes it, at schedule time, in W3C text form.** The host stamps
+`%MachineState{}.caller_context` before the macrostep that arms the send
+(`st-ADR-0063`), and the core copies it onto the effect. What it should stamp
+for tracing is the serialized propagation form - `%{"traceparent" =>
+"00-<trace-id>-<span-id>-01"}`, plus `"tracestate"` where the host propagates
+one - and not a live span context or an OTel context map. The row outlives
+the node: pids, refs and other node-local terms come back meaningless, and
+`:safe` decoding turns a term naming atoms the reading node has never seen
+into an undecodable row rather than a delivery. Strings and string keys have
+neither problem, and the wire form is fixed by a published spec rather than by
+a library version. `StatifierOban.Timer.JobArgs` states the two rules; nothing
+enforces them, because nothing here reads the term.
+
+**This package carries it and never reads it.** `from_effect/3` encodes it
+opaquely (through the host's `:opaque_codec` if one is configured),
+`to_effect/1` returns it byte-identical, `Timer.Delivery.fired_event/2` copies
+it onto the external event fed back, and the scheduling and delivery events
+carry it as metadata. Nothing in this package parses a traceparent, matches on
+the slot, or keys anything on it - `caller_context` is not a component of the
+dedup key or the cancellation key (`st-ADR-0063` decision 6), so two sends
+differing only in caller context are still the same scheduling decision. A
+host `Timer.Delivery` implementation owes the one hop this package cannot make
+for it: copying the slot onto the event it feeds back, which
+`fired_event/2` does for it.
+
+**The bridge turns it into a link, never a parent.** On a delivery-seam event
+the bridge reads `caller_context`, extracts the traceparent, and adds a *link*
+to the span it opens for the firing; the firing's parent stays the ambient job
+span. Parenthood would hold the arming trace open for the length of the delay.
+`nil` is the ordinary detached case - no context was attached, the fire is
+unlinked, and nothing is wrong.
+
+**The last hop is upstream's, and it is already in place.** The fed-back
+event's `caller_context` reaches `[:statifier, :session, :macrostep, :start]`
+and `[..., :stop]` as metadata, so the macrostep the firing drives is itself
+linkable to the arming trace without the bridge correlating anything by hand.
+That is the end of the chain, and `StatifierOban.RestartRoundTripTest` pins it
+across a simulated node death: schedule with a context, kill every process,
+fire from the store, and the context observed on the resumed run's macrostep
+is the one that was scheduled.
 
 ## For a host that is not using the bridge
 

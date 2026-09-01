@@ -29,9 +29,35 @@ defmodule StatifierOban.Timer.Delivery do
   Implementations must be idempotent under redelivery: jobs in this
   package are at-least-once, so `c:deliver/2` can run more than once for
   the same fired timer.
+
+  ## Restoring the caller's trace context
+
+  `caller_context` (st-ADR-0063) is the opaque host slot the sending
+  macrostep stamped onto the effect. It rides the job args untouched
+  (`StatifierOban.Timer.JobArgs`) and is on the `%SendDelayed{}` handed
+  to `c:deliver/2` days later, on another node, byte-identical to what
+  was scheduled. **An implementation MUST copy it onto the event it
+  feeds back**, unchanged. That last hop is where the value earns its
+  keep: upstream puts the fed-back event's `caller_context` on the
+  macrostep telemetry the firing drives
+  (`[:statifier, :session, :macrostep, :start | :stop]`), which is what
+  lets `opentelemetry_statifier` link the firing back to the trace that
+  armed the timer instead of leaving it detached. A delivery that drops
+  the slot loses the link at the last hop, and loses it silently.
+
+  `fired_event/2` builds that event correctly, and host implementations
+  should use it rather than assembling one by hand - it is the same
+  event `StatifierOban.Timer.Delivery.Session` feeds back.
+
+  What a host may put in the slot is the host's business and none of
+  this package's: nothing here reads it, matches on it, or keys anything
+  on it (ADR-0006 decision 7). Two durability rules do bind the host's
+  choice, and they are `StatifierOban.Timer.JobArgs`'s to state.
   """
 
   alias Statifier.Effect.SendDelayed
+  alias Statifier.Evaluator.SystemVariables
+  alias Statifier.Event
 
   @typedoc """
   Why the fired event was not fed back.
@@ -60,4 +86,37 @@ defmodule StatifierOban.Timer.Delivery do
   """
   @callback deliver(scope :: String.t(), effect :: SendDelayed.t()) ::
               :delivered | {:discarded, discard_reason()}
+
+  @doc """
+  Builds the external event a fired timer job feeds back, from the scope
+  it was scheduled under and the effect the job stored.
+
+  This mirrors statifier-ex's own `Session.Effects.delivered_event/2` for
+  a fired `target: nil` send, so an event that rejoins a run through a
+  durable job is indistinguishable from one an in-process timer
+  delivered:
+
+  - `origin` and `origintype` are stamped as the SCXML event processor at
+    the sending session's location (C.1);
+  - `sendid` rides only when the author wrote the id - an auto-generated
+    send id is not observable on the event;
+  - `data` and `caller_context` are carried through untouched, neither
+    read nor interpreted here.
+
+  It is public because every `StatifierOban.Timer.Delivery` owes the same
+  event, and a hand-assembled one is where the `caller_context` link
+  quietly goes missing. A host whose run is not a `Statifier.Session`
+  still gets the right event to feed into its next `Statifier.Interpreter`
+  drive.
+  """
+  @spec fired_event(String.t(), SendDelayed.t()) :: Event.t()
+  def fired_event(scope, %SendDelayed{} = effect) when is_binary(scope) do
+    Event.external(effect.event,
+      data: effect.data,
+      origin: SystemVariables.scxml_location(scope),
+      origintype: SystemVariables.scxml_event_processor(),
+      sendid: if(effect.id_from_author?, do: effect.send_id),
+      caller_context: effect.caller_context
+    )
+  end
 end
