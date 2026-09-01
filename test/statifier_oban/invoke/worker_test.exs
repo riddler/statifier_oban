@@ -57,6 +57,36 @@ defmodule StatifierOban.Invoke.WorkerTest do
     def run(%Invoke{}), do: raise(ArgumentError, "the payment gateway said no")
   end
 
+  # The run-keyed handler shape sob-7b1 exists for: work that has to know
+  # which run it is working for, written against the base as shipped.
+  defmodule RunKeyedHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{} = invoke, %{scope: scope}),
+      do: {:ok, %{"result" => "authorized", "scope" => scope, "invoke_id" => invoke.invoke_id}}
+  end
+
+  # Both arities defined: the two-arity one is the more specific contract,
+  # so it is the one the worker calls.
+  defmodule BothAritiesHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{"arity" => 1}}
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}, %{scope: _scope}), do: {:ok, %{"arity" => 2}}
+  end
+
   setup do
     start_supervised!(Statifier.Supervisor)
 
@@ -80,6 +110,40 @@ defmodule StatifierOban.Invoke.WorkerTest do
     assert %{success: 1, cancelled: 0, failure: 0} = drain()
 
     assert_received {:delivered_via_seam, "sess_iw_seam", "inv_seam", %{"result" => "authorized"}}
+  end
+
+  # -- the run context (sob-7b1) ------------------------------------------
+
+  # sabotage: `call_run/3` built the context with the invoke_id in the
+  # `:scope` key - went red (the donedata carried "inv_runctx" as its
+  # scope), reverted.
+  test "a run/2 handler is handed the job's scope, and its donedata is delivered" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_runctx", "inv_runctx", RunKeyedHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)}
+    )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+
+    assert_received {:delivered_via_seam, "sess_iw_runctx", "inv_runctx", donedata}
+    assert donedata["scope"] == "sess_iw_runctx"
+    assert donedata["invoke_id"] == "inv_runctx"
+  end
+
+  # sabotage: `call_run/3`'s arity test was flipped to prefer `run/1`
+  # wherever it exists - went red (the donedata came back `%{"arity" =>
+  # 1}`), reverted.
+  test "a handler defining both arities runs through run/2" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_botharities", "inv_botharities", BothAritiesHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)}
+    )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+
+    assert_received {:delivered_via_seam, _scope, "inv_botharities", %{"arity" => 2}}
   end
 
   # sabotage: `run/2`'s {:error, reason} arm returned {:ok, reason} - went

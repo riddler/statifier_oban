@@ -425,7 +425,30 @@ defmodule StatifierOban.Invoke.HandlerTest do
     assert [] = stored_jobs("sess_invoke_codec_boom", "inv_codec_boom")
   end
 
+  # -- the run callback (sob-7b1) -----------------------------------------
+
+  # sabotage: `__before_compile__/1`'s check was short-circuited to never
+  # raise - went red (the run-less module compiled clean), reverted.
+  test "a use-ing module defining neither run arity fails to compile, naming both" do
+    error =
+      assert_raise RuntimeError, fn ->
+        Code.compile_string("""
+        defmodule StatifierOban.Invoke.HandlerTest.NoRunHandler#{unique()} do
+          use StatifierOban.Invoke.Handler
+
+          @impl StatifierOban.Invoke.Handler
+          def config, do: StatifierOban.TestInvokeHandler.config()
+        end
+        """)
+      end
+
+    assert error.message =~ "run/1"
+    assert error.message =~ "run/2"
+  end
+
   # -- helpers ------------------------------------------------------------
+
+  defp unique, do: :erlang.unique_integer([:positive])
 
   defp machine do
     {:ok, machine} = Statifier.compile(@chart)
