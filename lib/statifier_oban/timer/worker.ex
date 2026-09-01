@@ -52,17 +52,29 @@ defmodule StatifierOban.Timer.Worker do
       states: Oban.Job.states()
     ]
 
+  alias StatifierOban.Telemetry
   alias StatifierOban.Timer.JobArgs
 
   @default_delivery StatifierOban.Timer.Delivery.Session
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args, meta: meta}) do
+  def perform(%Oban.Job{args: args, meta: meta} = job) do
     with {:ok, scope, effect} <- decode(args),
          {:ok, delivery} <- delivery_module(meta) do
+      # ADR-0006's delivery seam. The discard is the point of the pair:
+      # from Oban's side it is a job that asked to be cancelled, and the
+      # spec 6.2 verdict is buried inside `:result`. Nothing is emitted
+      # for the environment errors above - they say the deploy is wrong,
+      # not anything about this timer, and they ride Oban's exception
+      # event.
       case delivery.deliver(scope, effect) do
-        :delivered -> :ok
-        {:discarded, reason} -> {:cancel, {:discarded, reason}}
+        :delivered ->
+          Telemetry.timer_fired(scope, effect, delivery, job)
+          :ok
+
+        {:discarded, reason} ->
+          Telemetry.timer_discarded(scope, effect, delivery, reason, job)
+          {:cancel, {:discarded, reason}}
       end
     end
   end

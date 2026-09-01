@@ -1,10 +1,11 @@
 # Telemetry and the OpenTelemetry bridge half
 
 This note is the design record for what `statifier_oban` emits and what it
-deliberately leaves to others. It is a specification, not a description: at
-the time of writing this package emits no `:telemetry` events at all. This
-note and `docs/adr/0006-telemetry-events-for-the-durable-seams.md` are what
-the implementing work builds against.
+deliberately leaves to others. The eleven events below are implemented in
+`StatifierOban.Telemetry` (sob-kmw), which owns every event name and is the
+only module here that calls `:telemetry.execute/3`. This note and
+`docs/adr/0006-telemetry-events-for-the-durable-seams.md` are the contract it
+implements; neither is amended by the implementation.
 
 Three records govern and are not restated here:
 

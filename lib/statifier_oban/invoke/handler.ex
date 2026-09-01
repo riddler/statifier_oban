@@ -150,7 +150,7 @@ defmodule StatifierOban.Invoke.Handler do
 
   alias Statifier.Effect.Invoke
   alias Statifier.Invoke.Handler, as: UpstreamHandler
-  alias StatifierOban.Config
+  alias StatifierOban.{Config, Telemetry}
   alias StatifierOban.Invoke.{JobArgs, Worker}
 
   @typedoc """
@@ -317,19 +317,36 @@ defmodule StatifierOban.Invoke.Handler do
   def perform_start(handler, %Invoke{} = invoke, ctx) do
     config = handler.config()
 
-    with {:ok, scope} <- validated_scope(ctx),
-         {:ok, queue} <- invoke_queue(config),
-         {:ok, args} <- JobArgs.from_invoke(scope, handler, invoke, config.opaque_codec) do
-      changeset =
-        Worker.new(args,
-          queue: queue,
-          meta: %{"delivery" => Atom.to_string(config.invoke_delivery)}
-        )
+    # The scope is validated ahead of the rest so the rejection event can
+    # be honest about it: `{:invalid_scope, ctx}` is the one rejection
+    # with no validated scope to report, and putting the raw `ctx` on the
+    # event would leak unvalidated host state (ADR-0006 decision 9).
+    case validated_scope(ctx) do
+      {:ok, scope} ->
+        enqueue(handler, config, invoke, scope)
 
-      case Oban.insert(config.oban, changeset) do
-        {:ok, _job} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+      {:error, reason} ->
+        Telemetry.invoke_enqueue_rejected(nil, handler, invoke, reason)
+        {:error, reason}
+    end
+  end
+
+  @spec enqueue(module(), Config.t(), Invoke.t(), String.t()) :: :ok | {:error, perform_error()}
+  defp enqueue(handler, config, invoke, scope) do
+    with {:ok, queue} <- invoke_queue(config),
+         {:ok, args} <- JobArgs.from_invoke(scope, handler, invoke, config.opaque_codec),
+         changeset =
+           Worker.new(args,
+             queue: queue,
+             meta: %{"delivery" => Atom.to_string(config.invoke_delivery)}
+           ),
+         {:ok, job} <- Oban.insert(config.oban, changeset) do
+      Telemetry.invoke_enqueued(scope, handler, invoke, job)
+      :ok
+    else
+      {:error, reason} ->
+        Telemetry.invoke_enqueue_rejected(scope, handler, invoke, reason)
+        {:error, reason}
     end
   end
 
@@ -379,7 +396,8 @@ defmodule StatifierOban.Invoke.Handler do
     config = handler.config()
 
     with {:ok, scope} <- validated_scope(ctx) do
-      {:ok, _count} = Oban.cancel_all_jobs(config.oban, invoke_jobs(scope, invoke_id))
+      {:ok, count} = Oban.cancel_all_jobs(config.oban, invoke_jobs(scope, invoke_id))
+      Telemetry.invoke_cancelled(scope, handler, invoke_id, count)
       :ok
     end
   end

@@ -115,6 +115,7 @@ defmodule StatifierOban.Invoke.Worker do
     ]
 
   alias StatifierOban.Invoke.JobArgs
+  alias StatifierOban.Telemetry
 
   @default_delivery StatifierOban.Invoke.Delivery.Session
 
@@ -144,13 +145,21 @@ defmodule StatifierOban.Invoke.Worker do
   defp execute(job, delivery, scope, handler, invoke) do
     case run(job, delivery, scope, handler, invoke) do
       {:ok, donedata} ->
+        # ADR-0006's delivery seam, the invoke half: the discard is a
+        # completed invocation landing on a run that is no longer live,
+        # which Oban reports as a stop with the verdict inside `:result`.
         case delivery.deliver(scope, invoke.invoke_id, donedata) do
-          :delivered -> :ok
-          {:discarded, reason} -> {:cancel, {:discarded, reason}}
+          :delivered ->
+            Telemetry.invoke_delivered(scope, handler, invoke, delivery, job)
+            :ok
+
+          {:discarded, reason} ->
+            Telemetry.invoke_discarded(scope, handler, invoke, delivery, reason, job)
+            {:cancel, {:discarded, reason}}
         end
 
       {:error, {:run_failed, reason}} = failed ->
-        maybe_fail(job, delivery, scope, invoke.invoke_id, "run_failed", inspect(reason))
+        maybe_fail(job, delivery, scope, handler, invoke.invoke_id, "run_failed", inspect(reason))
         failed
     end
   end
@@ -186,14 +195,21 @@ defmodule StatifierOban.Invoke.Worker do
   # falls through to the bare cancel, which is exactly the old
   # behaviour. An unresolvable delivery module is the same dead end.
   @spec fail_undecodable(Oban.Job.t(), term()) :: :ok
-  defp fail_undecodable(%Oban.Job{args: args, meta: meta, attempt: attempt}, reason) do
+  defp fail_undecodable(%Oban.Job{args: args, meta: meta, attempt: attempt, id: job_id}, reason) do
+    detail = inspect(reason)
+
     with {:ok, scope, invoke_id} <- JobArgs.identity(args),
          {:ok, delivery} <- delivery_module(meta) do
       delivery.deliver_failure(scope, invoke_id,
         reason: "undecodable",
         attempts: attempt,
-        detail: inspect(reason)
+        detail: detail
       )
+
+      # `handler` is `nil` here and only here: the decode that would have
+      # named the module is the thing that failed, so the row's handler
+      # was never resolved. ADR-0006's table carries the same note.
+      Telemetry.invoke_failed(scope, nil, invoke_id, "undecodable", detail, attempt, job_id)
     end
 
     :ok
@@ -225,6 +241,7 @@ defmodule StatifierOban.Invoke.Worker do
         job,
         delivery,
         scope,
+        handler,
         invoke.invoke_id,
         "run_crashed",
         Exception.message(exception)
@@ -234,7 +251,7 @@ defmodule StatifierOban.Invoke.Worker do
   catch
     :exit, reason ->
       detail = "exited: #{inspect(reason)}"
-      maybe_fail(job, delivery, scope, invoke.invoke_id, "run_crashed", detail)
+      maybe_fail(job, delivery, scope, handler, invoke.invoke_id, "run_crashed", detail)
       exit(reason)
   end
 
@@ -278,14 +295,16 @@ defmodule StatifierOban.Invoke.Worker do
           Oban.Job.t(),
           module(),
           String.t(),
+          module(),
           String.t(),
           String.t(),
           String.t()
         ) :: :ok
   defp maybe_fail(
-         %Oban.Job{attempt: attempt, max_attempts: max_attempts},
+         %Oban.Job{attempt: attempt, max_attempts: max_attempts, id: job_id},
          delivery,
          scope,
+         handler,
          invoke_id,
          reason,
          detail
@@ -297,10 +316,15 @@ defmodule StatifierOban.Invoke.Worker do
       detail: detail
     )
 
+    # ADR-0006: the failure event fires from the same two call sites as
+    # the failure delivery, on the terminal attempt only. A retry that
+    # will be tried again is already `[:oban, :job, :exception]`.
+    Telemetry.invoke_failed(scope, handler, invoke_id, reason, detail, attempt, job_id)
+
     :ok
   end
 
-  defp maybe_fail(_job, _delivery, _scope, _invoke_id, _reason, _detail), do: :ok
+  defp maybe_fail(_job, _delivery, _scope, _handler, _invoke_id, _reason, _detail), do: :ok
 
   # The meta value is a module name written by the base handler from a
   # validated `Config`, so resolution failures are deploy-shaped: the

@@ -335,6 +335,37 @@ genuinely cannot be reduced to an id. The non-opaque fields (`scope`,
 `send_id`, `invoke_id`, and the position data) are never transformed by
 either answer, because dedup and cancellation query them directly.
 
+## Telemetry
+
+`StatifierOban.Telemetry` emits eleven `[:statifier_oban, ...]` events - five
+on the timer half, six on the invoke half - covering the one thing neither
+Oban nor Statifier can see: the durable step between the effect and the job
+row. Whether the write happened and whether it was new (`conflict?`), which
+statechart identity an opaque job row belongs to, and the spec-level verdicts
+that are successes for Oban and non-events for the chart - the 6.2 discard of
+a timer firing into a dead run above all.
+
+Attach to the whole surface without hand-copying names:
+
+```elixir
+:telemetry.attach_many(
+  "my-app-statifier-oban",
+  StatifierOban.Telemetry.events(),
+  &MyApp.Telemetry.handle_event/4,
+  nil
+)
+```
+
+Emission is unconditional and there is no knob to disable it: an event with no
+handlers is a lookup and a return. Duration, attempts, retries, snoozes and
+queue latency are Oban's and are not re-emitted here.
+
+`docs/telemetry.md` is the full contract - every event with its measurements
+and metadata, what is deliberately absent, and what
+`opentelemetry_statifier` builds on top of it. ADR-0006 records the decisions
+behind it, including the amendment discipline that makes these names as public
+as a function signature.
+
 ## Scope
 
 In scope: delayed sends into Oban jobs with cancellation, and an Oban-backed
