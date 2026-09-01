@@ -198,6 +198,23 @@ defmodule MyApp.CaptureHandler do
 end
 ```
 
+Work that keys on the **run** - provisioning tied to the workflow instance, a
+write into a per-run table - defines `run/2` instead. The invoke effect names
+the invocation but not the run it belongs to, so the second argument carries
+the run's scope (and its `invoke_id`) from the job row:
+
+```elixir
+@impl StatifierOban.Invoke.Handler
+def run(invoke, %{scope: scope}) do
+  with {:ok, record} <- MyApp.Provisioning.provision(scope, invoke.invoke_id) do
+    {:ok, %{"provision_id" => record.id}}
+  end
+end
+```
+
+Define one arity or the other: a handler defining both runs through `run/2`,
+and one defining neither does not compile.
+
 The handler is registered per session, not globally, and the chart names it by
 type:
 

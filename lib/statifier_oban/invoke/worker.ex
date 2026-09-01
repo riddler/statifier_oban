@@ -35,7 +35,8 @@ defmodule StatifierOban.Invoke.Worker do
   timer cancellation addresses every row under a `send_id`.
 
   `perform/1` decodes the stored effect, resolves the handler module the
-  args carry, calls its `run/1` - the host's actual work, at least once,
+  args carry, calls its `run/2` (or its `run/1`, for a handler that
+  defines only that arity) - the host's actual work, at least once,
   idempotent on `invoke_id` by that module's own contract - and hands
   the result to the job's `StatifierOban.Invoke.Delivery` module (from
   the meta written at enqueue time; absent meta falls back to the
@@ -120,7 +121,7 @@ defmodule StatifierOban.Invoke.Worker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta} = job) do
     with {:ok, scope, handler_name, invoke} <- decode(args),
-         {:ok, handler} <- resolve_module(handler_name, [run: 1], :invalid_handler),
+         {:ok, handler} <- resolve_module(handler_name, &run_exported?/1, :invalid_handler),
          {:ok, delivery} <- delivery_module(meta) do
       execute(job, delivery, scope, handler, invoke)
     else
@@ -214,7 +215,7 @@ defmodule StatifierOban.Invoke.Worker do
           Statifier.Effect.Invoke.t()
         ) :: {:ok, term()} | {:error, {:run_failed, term()}}
   defp run(job, delivery, scope, handler, invoke) do
-    case handler.run(invoke) do
+    case call_run(handler, invoke, scope) do
       {:ok, donedata} -> {:ok, donedata}
       {:error, reason} -> {:error, {:run_failed, reason}}
     end
@@ -236,6 +237,32 @@ defmodule StatifierOban.Invoke.Worker do
       maybe_fail(job, delivery, scope, invoke.invoke_id, "run_crashed", detail)
       exit(reason)
   end
+
+  # A handler defines `run/1` or `run/2`, and `run/2` is the more
+  # specific contract - it is the arity a handler defines *because* the
+  # work keys on the run - so a module exporting both runs through it.
+  # The context is built here rather than stored on the row: every field
+  # in it is already on the job (the scope is a top-level arg, read by
+  # the uniqueness key), so there is nothing new to serialize and old
+  # rows enqueued before this arity existed decode into it unchanged.
+  @spec call_run(module(), Statifier.Effect.Invoke.t(), String.t()) ::
+          {:ok, term()} | {:error, term()}
+  defp call_run(handler, invoke, scope) do
+    if function_exported?(handler, :run, 2) do
+      handler.run(invoke, %{scope: scope, invoke_id: invoke.invoke_id})
+    else
+      handler.run(invoke)
+    end
+  end
+
+  @spec run_exported?(module()) :: boolean()
+  defp run_exported?(module),
+    do: function_exported?(module, :run, 2) or function_exported?(module, :run, 1)
+
+  @spec delivery_exported?(module()) :: boolean()
+  defp delivery_exported?(module),
+    do:
+      function_exported?(module, :deliver, 3) and function_exported?(module, :deliver_failure, 3)
 
   # Oban has no "this job is being discarded" callback, so the terminal
   # attempt is recognized from the job row itself: `attempt` is stamped
@@ -287,7 +314,7 @@ defmodule StatifierOban.Invoke.Worker do
         {:ok, @default_delivery}
 
       name when is_binary(name) ->
-        resolve_module(name, [deliver: 3, deliver_failure: 3], :invalid_delivery)
+        resolve_module(name, &delivery_exported?/1, :invalid_delivery)
 
       other ->
         {:error, {:invalid_delivery, other}}
@@ -303,17 +330,14 @@ defmodule StatifierOban.Invoke.Worker do
   # cannot.
   @spec resolve_module(
           String.t(),
-          keyword(non_neg_integer()),
+          (module() -> boolean()),
           :invalid_handler | :invalid_delivery
         ) ::
           {:ok, module()} | {:error, {:invalid_handler | :invalid_delivery, term()}}
-  defp resolve_module(name, exports, error_tag) do
+  defp resolve_module(name, exports_ok?, error_tag) do
     module = String.to_existing_atom(name)
 
-    if Code.ensure_loaded?(module) and
-         Enum.all?(exports, fn {function, arity} ->
-           function_exported?(module, function, arity)
-         end) do
+    if Code.ensure_loaded?(module) and exports_ok?.(module) do
       {:ok, module}
     else
       {:error, {error_tag, name}}

@@ -25,6 +25,28 @@ defmodule StatifierOban.Invoke.Handler do
         end
       end
 
+  Work that keys on the **run** rather than on the invocation defines
+  `run/2` instead, which is handed the job's `t:run_ctx/0` alongside the
+  effect - the scope lives on the job row, not on the effect, so `run/1`
+  cannot see which run it is working for:
+
+      defmodule MyApp.ProvisioningHandler do
+        use StatifierOban.Invoke.Handler
+
+        @impl StatifierOban.Invoke.Handler
+        def config, do: MyApp.statifier_oban_config()
+
+        @impl StatifierOban.Invoke.Handler
+        def run(invoke, %{scope: scope}) do
+          with {:ok, record} <- MyApp.Provisioning.provision(scope, invoke.invoke_id) do
+            {:ok, %{"provision_id" => record.id}}
+          end
+        end
+      end
+
+  Define one arity or the other: a module defining both runs through
+  `run/2`, and one defining neither does not compile.
+
   The division of labor follows st-ADR-0051 decision 4 exactly:
 
   - **The injected `start/2`, `cancel/2`, and `forward/3` are pure
@@ -44,7 +66,7 @@ defmodule StatifierOban.Invoke.Handler do
     matches only jobs that have not run yet. That uniqueness is
     what this module enforces; what your `run/1` does with the outside
     world is yours to make idempotent the same way.
-  - **`run/1` is your work**, executed inside the Oban job - at least
+  - **`run/1` (or `run/2`) is your work**, executed inside the Oban job - at least
     once, so the MUST-be-idempotent-on-`invoke_id` contract from
     statifier-ex's `docs/extending.md` lands on it. `{:ok, donedata}`
     becomes `done.invoke.<invoke_id>` with that donedata, delivered
@@ -138,6 +160,28 @@ defmodule StatifierOban.Invoke.Handler do
   """
   @type payload :: {:start, Invoke.t()} | {:cancel, String.t()}
 
+  @typedoc """
+  What the worker knows about the job it is running `run/2` inside, and
+  the effect does not carry.
+
+  `:scope` is the run the invocation belongs to - the same string the
+  base validated out of the planning `ctx` (`ctx.session_id`, or the
+  host's own durable run id) and stored on the job row, so work keyed
+  to the workflow instance can key on it. `:invoke_id` is the
+  idempotency key, repeated here so a handler destructuring the context
+  has the whole identity pair in one place; it is also on the effect,
+  and the two are always the same value.
+
+  The map is open by construction: this base may add keys, so match the
+  ones you need (`def run(invoke, %{scope: scope})`) rather than the
+  whole map.
+  """
+  @type run_ctx :: %{
+          required(:scope) => String.t(),
+          required(:invoke_id) => String.t(),
+          optional(atom()) => term()
+        }
+
   @typedoc "Why a start or cancel could not be performed."
   @type perform_error ::
           {:missing_option, :invoke_queue}
@@ -163,10 +207,41 @@ defmodule StatifierOban.Invoke.Handler do
   """
   @callback run(invoke :: Invoke.t()) :: {:ok, donedata :: term()} | {:error, term()}
 
+  @doc """
+  The same work, handed the job's `t:run_ctx/0` as well as the effect -
+  the arity to define when the work keys on the **run** rather than on
+  the invocation alone (sob-7b1).
+
+  The effect is the invocation, so `run/1` sees everything about *what*
+  was invoked; what it cannot see is *which run* invoked it, because the
+  scope lives on the job row rather than on the effect. Provisioning
+  keyed to the workflow instance, a write into a per-run table, a lookup
+  of the host's own record for the run: all of that needs the scope, and
+  this is the arity that has it.
+
+  Define `run/1` or `run/2`, not both - a module defining both runs
+  through `run/2`, and the `run/1` clause is dead code. A module
+  defining neither does not compile. The contract is otherwise
+  identical to `c:run/1`'s, at-least-once and idempotent-on-`invoke_id`
+  included.
+
+      @impl StatifierOban.Invoke.Handler
+      def run(invoke, %{scope: scope}) do
+        with {:ok, record} <- MyApp.Provisioning.provision(scope, invoke.invoke_id) do
+          {:ok, %{"provision_id" => record.id}}
+        end
+      end
+  """
+  @callback run(invoke :: Invoke.t(), ctx :: run_ctx()) ::
+              {:ok, donedata :: term()} | {:error, term()}
+
+  @optional_callbacks run: 1, run: 2
+
   defmacro __using__(_opts) do
     quote do
       @behaviour Statifier.Invoke.Handler
       @behaviour StatifierOban.Invoke.Handler
+      @before_compile StatifierOban.Invoke.Handler
 
       @impl Statifier.Invoke.Handler
       def start(%Statifier.Effect.Invoke{} = invoke, _ctx),
@@ -185,6 +260,25 @@ defmodule StatifierOban.Invoke.Handler do
 
       defoverridable forward: 3
     end
+  end
+
+  @doc false
+  # Both `run` arities are optional callbacks - a module implements one
+  # of them, so neither can be required on its own - and an optional
+  # callback nobody implements is silent at compile time. Without this
+  # check a handler that defines no work at all would compile clean and
+  # fail only in production, as a job retrying `{:invalid_handler, _}`
+  # until it discards. The behaviour cannot express "exactly one of
+  # these", so the `use` does.
+  defmacro __before_compile__(env) do
+    unless Module.defines?(env.module, {:run, 1}, :def) or
+             Module.defines?(env.module, {:run, 2}, :def) do
+      raise "#{inspect(env.module)} uses StatifierOban.Invoke.Handler but defines " <>
+              "neither run/1 nor run/2. Define run/1 for work that needs only the " <>
+              "invoke effect, or run/2 for work that also needs the run's scope."
+    end
+
+    :ok
   end
 
   @doc """
