@@ -208,3 +208,30 @@ and no consumer may fold it into a metric dimension.
   Oban's nor trivial, but it is also entirely the host's code, and a host
   that wants it can instrument its own handler with better names than this
   package could invent. `[:oban, :job, :stop]` already bounds it.
+
+## Note (2026-09-01): `:queue_time` is delivered in native time units
+
+Decision 5 describes Oban's `:queue_time` on `[:oban, :job, :stop]` as
+"`attempted_at - scheduled_at` in nanoseconds (`Oban.Queue.Executor`)", and
+`docs/telemetry.md` said the same. That is the computation, not the unit a
+handler receives. `Oban.Queue.Executor.record_finished/1` (Oban 2.23.1) takes
+that difference with `DateTime.diff/3` at `:nanosecond`, floors it at zero,
+and then passes it through `System.convert_time_unit(:nanosecond, :native)`
+before the measurement is put on the event - so `:queue_time` arrives in
+`:native` time units, exactly as `:duration` does. Oban's own default logger
+converts both back
+(`System.convert_time_unit(value, :native, :microsecond)`) before printing
+them, which is the tell.
+
+A consumer that reads the raw measurement as nanoseconds is right only by
+accident of the BEAM's native time unit being one nanosecond on the platforms
+this package is developed on. It is not guaranteed, and any host converting
+`:queue_time` for a metric should name `:native` as the source unit.
+
+Nothing above moves. Decision 5's reason for having no lateness measurement
+is that Oban performs the same subtraction against the same two timestamps,
+which is unaffected by the unit the result is reported in, as is the caveat
+that a retry rewrites `scheduled_at`. `docs/telemetry.md` has been given the
+matching one-word precision in the same change; no event, measurement, or
+metadata key in this record changes, so this is a precision Note rather than
+an amendment under decision 4.
