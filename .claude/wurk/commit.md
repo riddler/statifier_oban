@@ -54,8 +54,8 @@ section at release and removed.
 
 ## Version bump: never
 
-`mix.exs` holds `0.3.2` (release prepared 2026-08-31 on the `sob-0h3` bead;
-0.3.1, published 2026-08-31, is still the last version actually on Hex - the
+`mix.exs` holds `0.4.0` (release prepared 2026-09-01 on the `sob-f8y` bead;
+0.3.2, published 2026-08-31, is still the last version actually on Hex - the
 tag and the publish are the operator's) until a release bead says otherwise,
 and the authority table marks releases and version bumps as never an
 agent's. Never edit the version field as part of an ordinary commit,
