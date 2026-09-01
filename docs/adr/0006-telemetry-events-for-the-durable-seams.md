@@ -1,6 +1,6 @@
 # ADR-0006: Telemetry events for the durable seams
 
-Status: proposed (2026-09-01, sob-43q)
+Status: accepted (2026-09-01, sob-43q; unqualified direction-agent verdict, campaign-025)
 
 ## Context
 

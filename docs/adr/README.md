@@ -7,7 +7,7 @@
 | [0003](0003-macrostep-joins-the-invoke-job-dedup-key.md) | Macrostep joins the invoke job dedup key | accepted |
 | [0004](0004-host-pluggable-codec-for-opaque-job-args.md) | Host-pluggable codec for opaque job args | accepted |
 | [0005](0005-permanent-invoke-failure-delivers-on-the-terminal-attempt.md) | Permanent invoke failure delivers on the terminal attempt | accepted |
-| [0006](0006-telemetry-events-for-the-durable-seams.md) | Telemetry events for the durable seams | proposed |
+| [0006](0006-telemetry-events-for-the-durable-seams.md) | Telemetry events for the durable seams | accepted |
 
 New ADRs: next number, same three-section format (Context, Decision,
 Consequences). Pick the number against a freshly fetched remote. A bare
