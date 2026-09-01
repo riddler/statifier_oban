@@ -1,7 +1,6 @@
 # ADR-0007: Fan-out child starts are batched, and the concurrency bound is the runtime's
 
-Status: proposed (2026-09-01, sob-djz, campaign-026) - pending the
-direction-agent verdict on this record's path
+Status: accepted (2026-09-01, sob-djz; unqualified direction-agent verdict on the first review, campaign-026)
 
 ## Context
 
