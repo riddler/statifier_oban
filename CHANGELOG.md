@@ -10,6 +10,18 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.4.0] 2026-09-01
+
+### Added
+
+- An invoke handler may define `run/2` instead of `run/1` and receive the run's
+  scope alongside the invoke effect, so work keyed to the workflow instance can
+  be written against the Oban handler base.
+- `StatifierOban.Timer.Delivery.fired_event/2` builds the external event a
+  fired timer feeds back, so a host delivery implementation restores the
+  caller's trace context instead of assembling the event by hand and dropping
+  it.
+
 ## [0.3.2] 2026-08-31
 
 ### Fixed
