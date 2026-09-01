@@ -10,6 +10,14 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.5.0] 2026-09-01
+
+### Added
+
+- `StatifierOban.Telemetry` emits eleven `[:statifier_oban, ...]` events across
+  the scheduling and delivery seams, with `events/0` returning the full list
+  for `:telemetry.attach_many/4` (ADR-0006, `docs/telemetry.md`).
+
 ## [0.4.0] 2026-09-01
 
 ### Added
