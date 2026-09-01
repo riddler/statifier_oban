@@ -35,7 +35,7 @@ defmodule StatifierOban.Timer do
   import Ecto.Query, only: [where: 3]
 
   alias Statifier.Effect.{Cancel, SendDelayed}
-  alias StatifierOban.Config
+  alias StatifierOban.{Config, Telemetry}
   alias StatifierOban.Timer.{CancellationKey, JobArgs, Key, Worker}
 
   @typedoc "Why a SendDelayed effect could not be scheduled."
@@ -64,23 +64,44 @@ defmodule StatifierOban.Timer do
   @spec schedule(Config.t(), Key.scope(), SendDelayed.t()) ::
           {:ok, Oban.Job.t()} | {:error, schedule_error()}
   def schedule(%Config{} = config, scope, %SendDelayed{target: nil} = effect) do
-    with {:ok, _dedup_key} <- Key.dedup_key(scope, effect),
-         {:ok, args} <- JobArgs.from_effect(scope, effect, config.opaque_codec) do
-      scheduled_at = DateTime.add(DateTime.utc_now(), effect.delay_ms, :millisecond)
+    result =
+      with {:ok, _dedup_key} <- Key.dedup_key(scope, effect),
+           {:ok, args} <- JobArgs.from_effect(scope, effect, config.opaque_codec) do
+        scheduled_at = DateTime.add(DateTime.utc_now(), effect.delay_ms, :millisecond)
 
-      changeset =
-        Worker.new(args,
-          queue: config.timers_queue,
-          scheduled_at: scheduled_at,
-          meta: %{"delivery" => Atom.to_string(config.delivery)}
-        )
+        changeset =
+          Worker.new(args,
+            queue: config.timers_queue,
+            scheduled_at: scheduled_at,
+            meta: %{"delivery" => Atom.to_string(config.delivery)}
+          )
 
-      Oban.insert(config.oban, changeset)
-    end
+        Oban.insert(config.oban, changeset)
+      end
+
+    report_schedule(scope, effect, result)
   end
 
-  def schedule(%Config{}, _scope, %SendDelayed{target: target}) do
-    {:error, {:non_self_target, target}}
+  def schedule(%Config{}, scope, %SendDelayed{target: target} = effect) do
+    reason = {:non_self_target, target}
+    Telemetry.timer_schedule_rejected(scope, effect, reason)
+    {:error, reason}
+  end
+
+  # ADR-0006's scheduling seam: exactly one event per call, on whichever
+  # way the call went out. The `conflict?` flag on a successful insert is
+  # the only place a replayed drive's no-op is observable at all - the
+  # stored row is the same single row either way.
+  @spec report_schedule(Key.scope(), SendDelayed.t(), {:ok, Oban.Job.t()} | {:error, term()}) ::
+          {:ok, Oban.Job.t()} | {:error, term()}
+  defp report_schedule(scope, effect, {:ok, %Oban.Job{} = job} = result) do
+    Telemetry.timer_scheduled(scope, effect, job)
+    result
+  end
+
+  defp report_schedule(scope, effect, {:error, reason} = result) do
+    Telemetry.timer_schedule_rejected(scope, effect, reason)
+    result
   end
 
   @doc """
@@ -131,8 +152,10 @@ defmodule StatifierOban.Timer do
   @spec cancel(Config.t(), Key.scope(), Cancel.t()) ::
           {:ok, non_neg_integer()} | {:error, Key.error()}
   def cancel(%Config{} = config, scope, %Cancel{} = effect) do
-    with {:ok, key} <- Key.cancellation_key(scope, effect) do
-      Oban.cancel_all_jobs(config.oban, timer_jobs(key))
+    with {:ok, key} <- Key.cancellation_key(scope, effect),
+         {:ok, count} <- Oban.cancel_all_jobs(config.oban, timer_jobs(key)) do
+      Telemetry.timer_cancelled(scope, effect, count)
+      {:ok, count}
     end
   end
 

@@ -71,6 +71,11 @@ defmodule StatifierOban.MixProject do
     [
       statifier_dep(),
       {:oban, "~> 2.19"},
+      # Declared directly rather than leaned on transitively: ADR-0006
+      # makes `StatifierOban.Telemetry` public API, so `:telemetry` is a
+      # requirement of this package's own surface, not an artifact of
+      # Oban's. The floor matches statifier's and Oban's.
+      {:telemetry, "~> 1.3"},
 
       # Dev / test
       {:ecto_sqlite3, "~> 0.24", only: :test},
