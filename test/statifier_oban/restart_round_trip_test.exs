@@ -21,6 +21,11 @@ defmodule StatifierOban.RestartRoundTripTest do
   @oban_before StatifierOban.RoundTripObanBefore
   @oban_after StatifierOban.RoundTripObanAfter
 
+  # The W3C text form `docs/telemetry.md` directs a tracing host to store:
+  # strings only, so nothing in it is node-local and nothing names an atom
+  # the node reading the row days later may never have seen.
+  @caller_context %{"traceparent" => "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+
   # Two hops on the same event: a duplicate delivery is observable as the
   # session reaching "c" instead of resting in "b".
   @chart """
@@ -154,6 +159,65 @@ defmodule StatifierOban.RestartRoundTripTest do
     assert error =~ "terminated"
   end
 
+  # sabotage: dropped `caller_context: effect.caller_context` from
+  # Delivery.fired_event/2 - went red here (the resumed run's macrostep
+  # reported caller_context: nil, the whole trace-stitch silently lost at
+  # the last hop) - reverted.
+  test "schedule -> restart -> fire: the caller's trace context arrives on the resumed macrostep",
+       %{queue: queue, scope: scope, before: config_before} do
+    start_session!(scope)
+    effect = send_delayed_fixture(@caller_context)
+
+    assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config_before, scope, effect)
+
+    restart()
+
+    # The context outlived every process as row data. It is opaque on the
+    # wire - the row carries tagged bytes, not a readable traceparent -
+    # and nothing in this package reads it either way.
+    assert %Oban.Job{state: "scheduled", args: %{"caller_context" => stored}} =
+             TestRepo.get!(Oban.Job, id)
+
+    refute stored == @caller_context
+
+    pid = start_session!(scope)
+    observe_macrosteps!()
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain(@oban_after, queue)
+
+    # The end of the chain: the fired event rejoined the resumed run
+    # carrying the context that armed it, and upstream put it on the
+    # macrostep telemetry the firing drove. That is what lets the bridge
+    # link this macrostep back to the trace that scheduled the timer.
+    assert_receive {:macrostep_start, %{trigger: :event, event_name: "reminder"} = metadata},
+                   1_000
+
+    assert metadata.caller_context == @caller_context
+    assert metadata.session_id == scope
+
+    assert %{status: :running, configuration: configuration} = Statifier.Session.status(pid)
+    assert MapSet.member?(configuration, "b")
+  end
+
+  # Forwards `[:statifier, :session, :macrostep, :start]` to the test
+  # process. Attached after the resumed session has initialized, so the
+  # only macrostep it can see is the one the fired timer drives.
+  defp observe_macrosteps! do
+    handler_id = {__MODULE__, make_ref()}
+    test = self()
+
+    :telemetry.attach(
+      handler_id,
+      [:statifier, :session, :macrostep, :start],
+      fn _event, _measurements, metadata, _config ->
+        send(test, {:macrostep_start, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
   # The simulated node death: every process goes down - sessions, the
   # registry, the Oban instance - and a new Oban instance under a new name
   # comes up over the same durable store.
@@ -188,7 +252,7 @@ defmodule StatifierOban.RestartRoundTripTest do
     TestRepo.aggregate(from(j in Oban.Job, where: j.queue == ^queue), :count)
   end
 
-  defp send_delayed_fixture do
+  defp send_delayed_fixture(caller_context \\ nil) do
     # A day-long delay: the proof is that the fire time is data in the
     # store, not process state - the drain fires it deliberately.
     %SendDelayed{
@@ -205,7 +269,7 @@ defmodule StatifierOban.RestartRoundTripTest do
       round: 1,
       ordinal: 1,
       id_from_author?: false,
-      caller_context: nil
+      caller_context: caller_context
     }
   end
 

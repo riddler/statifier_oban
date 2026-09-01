@@ -28,6 +28,36 @@ defmodule StatifierOban.Timer.JobArgs do
   enough to rebuild the event and its position, per ADR-0054's
   correlation rule - position is read off the stored effect, never
   recomputed at delivery.
+
+  ## What a host may durably put in `caller_context`
+
+  Byte-identical is not the same as meaningful. The row outlives the node
+  that wrote it - that is the whole point of the package - so two rules
+  bind what a host stamps into the slot, and this module enforces neither
+  because it never reads the term:
+
+  - **Nothing node-local.** A pid, a port, a reference, an ETS table id,
+    or a monitor ref comes back as a term that decodes fine and refers to
+    nothing. There is no error to raise; the value is simply a lie by the
+    time it is read.
+  - **Nothing whose atoms the reading node may not have seen.** Decoding
+    is `:safe`, so a payload naming an unknown atom is a typed decode
+    error rather than a minted atom, and an undecodable row is cancelled
+    (`{:undecodable, _}`) rather than retried. A term carrying a library's
+    internal atoms therefore couples delivery to that library being
+    loaded on whichever node happens to run the job.
+
+  For the tracing case both rules point the same way, and this is the
+  shape the family expects: serialize at schedule time to the **W3C Trace
+  Context text form** - `%{"traceparent" => "00-<trace-id>-<span-id>-01"}`
+  plus `"tracestate"` where the host propagates one - rather than storing
+  a live span context or an OTel context map. Strings and string keys
+  carry no atoms and nothing node-local, the encoding is fixed by a
+  published spec instead of a library version, and the value stays
+  readable in the row during an incident. Restoring it is
+  `opentelemetry_statifier`'s: this package hands the term back exactly as
+  given (`StatifierOban.Timer.Delivery.fired_event/2`) and reads nothing
+  out of it (ADR-0006 decision 7).
   """
 
   alias Statifier.Effect.SendDelayed

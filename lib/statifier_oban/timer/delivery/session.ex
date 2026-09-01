@@ -20,13 +20,16 @@ defmodule StatifierOban.Timer.Delivery.Session do
      and reported as the same `:terminated` fact step 1 answers.
 
   Delivery is `Statifier.Session.send_event/2` - the same door a fired
-  in-process timer rejoins through - with the event built from the stored
-  effect exactly as the session's own delivery path builds it:
-  `origin`/`origintype` stamped as the scxml processor at the sending
-  session's location, `sendid` only when the author wrote the id (C.1),
-  `data` and `caller_context` carried through untouched. `send_event/2`
-  is a cast, so `:delivered` means enqueued onto the session's inbox, not
-  processed.
+  in-process timer rejoins through - with the event built by
+  `StatifierOban.Timer.Delivery.fired_event/2`, exactly as the session's
+  own delivery path builds it: `origin`/`origintype` stamped as the scxml
+  processor at the sending session's location, `sendid` only when the
+  author wrote the id (C.1), `data` and `caller_context` carried through
+  untouched. The `caller_context` hop is what stitches the firing back to
+  the trace that armed the timer, hours or a restart later; the behaviour
+  module's "Restoring the caller's trace context" section spells out why.
+  `send_event/2` is a cast, so `:delivered` means enqueued onto the
+  session's inbox, not processed.
 
   This module requires `Statifier.Supervisor` (which owns
   `Statifier.Registry`) to be running: `Registry.lookup/2` raises when it
@@ -40,8 +43,7 @@ defmodule StatifierOban.Timer.Delivery.Session do
   @behaviour StatifierOban.Timer.Delivery
 
   alias Statifier.Effect.SendDelayed
-  alias Statifier.Evaluator.SystemVariables
-  alias Statifier.Event
+  alias StatifierOban.Timer.Delivery
 
   @impl StatifierOban.Timer.Delivery
   def deliver(scope, %SendDelayed{} = effect) when is_binary(scope) do
@@ -56,7 +58,7 @@ defmodule StatifierOban.Timer.Delivery.Session do
   defp deliver_if_running(pid, scope, effect) do
     case Statifier.Session.status(pid) do
       %{status: :running} ->
-        :ok = Statifier.Session.send_event(pid, fired_event(scope, effect))
+        :ok = Statifier.Session.send_event(pid, Delivery.fired_event(scope, effect))
         :delivered
 
       %{status: halted} ->
@@ -68,20 +70,5 @@ defmodule StatifierOban.Timer.Delivery.Session do
     # this boundary returns it as data instead of crashing the worker
     # into retrying a delivery spec 6.2 requires it to discard.
     :exit, _reason -> {:discarded, :terminated}
-  end
-
-  # Mirrors the session's own delivered event for a fired `target: nil`
-  # send (statifier-ex `Session.Effects.delivered_event/2`): C.1 stamps
-  # origin/origintype, and `sendid` rides only when the author wrote the
-  # id - an auto-generated send id is not observable on the event.
-  @spec fired_event(String.t(), SendDelayed.t()) :: Event.t()
-  defp fired_event(scope, %SendDelayed{} = effect) do
-    Event.external(effect.event,
-      data: effect.data,
-      origin: SystemVariables.scxml_location(scope),
-      origintype: SystemVariables.scxml_event_processor(),
-      sendid: if(effect.id_from_author?, do: effect.send_id),
-      caller_context: effect.caller_context
-    )
   end
 end
