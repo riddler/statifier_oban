@@ -173,7 +173,7 @@ writes nothing, so run `mix format` yourself before committing.
 
 Set `STATIFIER_PATH` to a local statifier-ex checkout when co-developing a
 change that spans both repos; otherwise `mix.exs` declares statifier as an
-ordinary Hex dependency (`{:statifier, "~> 2.2"}`) and the version `mix.lock`
+ordinary Hex dependency (`{:statifier, "~> 2.5"}`) and the version `mix.lock`
 resolved it to governs.
 
 <!-- usage-rules-start -->

@@ -92,22 +92,18 @@ defmodule StatifierOban.MixProject do
   # change that spans both repos. It is an env var rather than a mix.exs edit
   # so the override never lands in a commit by accident.
   #
-  # INTERIM git pin (sob-10x, campaign 027). The default arm is normally the
-  # Hex release `{:statifier, "~> 2.2"}` - the floor being 2.2 because
-  # `Statifier.Session.failed_invocation/3` (st-ADR-0068) is the door
-  # `StatifierOban.Invoke.Delivery.Session.deliver_failure/3` calls, and it
-  # first shipped in statifier 2.2.0. It is pinned to a commit instead
-  # because the invoke half of st-ADR-0063 is not on Hex yet: this package
-  # now reads `%Statifier.Effect.Invoke{}.caller_context` and hands it to
-  # `Statifier.Invoke.Answer.done/4` / `failed/4`, and none of the three
-  # exists in 2.4.0. Re-pin to the Hex release the moment statifier
-  # publishes it; the FINAL re-pin is its own bead.
-  @statifier_ref "3d1b8db000bf930baf0eb763e67b193abf0951c2"
-
+  # The requirement floor is 2.5: this package reads
+  # `%Statifier.Effect.Invoke{}.caller_context` and hands it to
+  # `Statifier.Invoke.Answer.done/4` / `failed/4` (the invoke half of
+  # st-ADR-0063), and all three first shipped in statifier 2.5.0. The
+  # earlier floor was 2.2, for `Statifier.Session.failed_invocation/3`
+  # (st-ADR-0068), the door
+  # `StatifierOban.Invoke.Delivery.Session.deliver_failure/3` calls; 2.5
+  # subsumes it.
   defp statifier_dep do
     case System.get_env("STATIFIER_PATH") do
       nil ->
-        {:statifier, github: "riddler/statifier-ex", ref: @statifier_ref}
+        {:statifier, "~> 2.5"}
 
       path ->
         {:statifier, path: path, override: true}
