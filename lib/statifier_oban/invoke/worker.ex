@@ -148,7 +148,7 @@ defmodule StatifierOban.Invoke.Worker do
         # ADR-0006's delivery seam, the invoke half: the discard is a
         # completed invocation landing on a run that is no longer live,
         # which Oban reports as a stop with the verdict inside `:result`.
-        case delivery.deliver(scope, invoke.invoke_id, donedata) do
+        case deliver_done(delivery, scope, invoke, donedata) do
           :delivered ->
             Telemetry.invoke_delivered(scope, handler, invoke, delivery, job)
             :ok
@@ -159,7 +159,7 @@ defmodule StatifierOban.Invoke.Worker do
         end
 
       {:error, {:run_failed, reason}} = failed ->
-        maybe_fail(job, delivery, scope, handler, invoke.invoke_id, "run_failed", inspect(reason))
+        maybe_fail(job, delivery, scope, handler, invoke, "run_failed", inspect(reason))
         failed
     end
   end
@@ -200,10 +200,17 @@ defmodule StatifierOban.Invoke.Worker do
 
     with {:ok, scope, invoke_id} <- JobArgs.identity(args),
          {:ok, delivery} <- delivery_module(meta) do
-      delivery.deliver_failure(scope, invoke_id,
-        reason: "undecodable",
-        attempts: attempt,
-        detail: detail
+      # `caller_context: nil` is not a shortcut: the opaque payload is
+      # exactly what failed to decode, so the slot is unrecoverable here
+      # while `scope` and `invoke_id` survive as plain strings. An
+      # unlinked failure span is the right outcome, and the seam's
+      # `deliver_failure/4` doc records the asymmetry.
+      deliver_failure(
+        delivery,
+        scope,
+        invoke_id,
+        [reason: "undecodable", attempts: attempt, detail: detail],
+        nil
       )
 
       # `handler` is `nil` here and only here: the decode that would have
@@ -242,7 +249,7 @@ defmodule StatifierOban.Invoke.Worker do
         delivery,
         scope,
         handler,
-        invoke.invoke_id,
+        invoke,
         "run_crashed",
         Exception.message(exception)
       )
@@ -251,7 +258,7 @@ defmodule StatifierOban.Invoke.Worker do
   catch
     :exit, reason ->
       detail = "exited: #{inspect(reason)}"
-      maybe_fail(job, delivery, scope, handler, invoke.invoke_id, "run_crashed", detail)
+      maybe_fail(job, delivery, scope, handler, invoke, "run_crashed", detail)
       exit(reason)
   end
 
@@ -276,10 +283,16 @@ defmodule StatifierOban.Invoke.Worker do
   defp run_exported?(module),
     do: function_exported?(module, :run, 2) or function_exported?(module, :run, 1)
 
+  # Both seam doors are still required; each is satisfied by either
+  # arity, because `deliver/4` and `deliver_failure/4` are the wider
+  # forms of the same doors rather than extra ones. A module exporting
+  # one door and not the other stays unresolvable, exactly as before.
   @spec delivery_exported?(module()) :: boolean()
-  defp delivery_exported?(module),
-    do:
-      function_exported?(module, :deliver, 3) and function_exported?(module, :deliver_failure, 3)
+  defp delivery_exported?(module) do
+    (function_exported?(module, :deliver, 3) or function_exported?(module, :deliver, 4)) and
+      (function_exported?(module, :deliver_failure, 3) or
+         function_exported?(module, :deliver_failure, 4))
+  end
 
   # Oban has no "this job is being discarded" callback, so the terminal
   # attempt is recognized from the job row itself: `attempt` is stamped
@@ -296,7 +309,7 @@ defmodule StatifierOban.Invoke.Worker do
           module(),
           String.t(),
           module(),
-          String.t(),
+          Statifier.Effect.Invoke.t(),
           String.t(),
           String.t()
         ) :: :ok
@@ -305,15 +318,17 @@ defmodule StatifierOban.Invoke.Worker do
          delivery,
          scope,
          handler,
-         invoke_id,
+         %Statifier.Effect.Invoke{invoke_id: invoke_id} = invoke,
          reason,
          detail
        )
        when attempt >= max_attempts do
-    delivery.deliver_failure(scope, invoke_id,
-      reason: reason,
-      attempts: attempt,
-      detail: detail
+    deliver_failure(
+      delivery,
+      scope,
+      invoke_id,
+      [reason: reason, attempts: attempt, detail: detail],
+      invoke.caller_context
     )
 
     # ADR-0006: the failure event fires from the same two call sites as
@@ -324,7 +339,39 @@ defmodule StatifierOban.Invoke.Worker do
     :ok
   end
 
-  defp maybe_fail(_job, _delivery, _scope, _handler, _invoke_id, _reason, _detail), do: :ok
+  defp maybe_fail(_job, _delivery, _scope, _handler, _invoke, _reason, _detail), do: :ok
+
+  # The two seam doors, each called at the widest arity the delivery
+  # module exports - `StatifierOban.Invoke.Handler`'s `run/1`-or-`run/2`
+  # rule, applied to the other side of the job. The four-argument form
+  # is the more specific contract: a module defines it *because* it
+  # builds the answer event itself and needs the invocation's
+  # `caller_context` for it, so a module exporting both is routed there
+  # and its three-argument clause is dead code.
+  #
+  # The opts list is built here rather than stored on the row: the only
+  # key in it is already on the decoded effect, so there is nothing new
+  # to serialize, and a row enqueued before the field existed decodes to
+  # `caller_context: nil` - `st-ADR-0063`'s own "no context attached".
+  @spec deliver_done(module(), String.t(), Statifier.Effect.Invoke.t(), term()) ::
+          :delivered | {:discarded, term()}
+  defp deliver_done(delivery, scope, invoke, donedata) do
+    if function_exported?(delivery, :deliver, 4) do
+      delivery.deliver(scope, invoke.invoke_id, donedata, caller_context: invoke.caller_context)
+    else
+      delivery.deliver(scope, invoke.invoke_id, donedata)
+    end
+  end
+
+  @spec deliver_failure(module(), String.t(), String.t(), keyword(), term()) ::
+          :delivered | {:discarded, term()}
+  defp deliver_failure(delivery, scope, invoke_id, failure, caller_context) do
+    if function_exported?(delivery, :deliver_failure, 4) do
+      delivery.deliver_failure(scope, invoke_id, failure, caller_context: caller_context)
+    else
+      delivery.deliver_failure(scope, invoke_id, failure)
+    end
+  end
 
   # The meta value is a module name written by the base handler from a
   # validated `Config`, so resolution failures are deploy-shaped: the

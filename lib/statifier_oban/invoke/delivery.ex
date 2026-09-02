@@ -35,6 +35,59 @@ defmodule StatifierOban.Invoke.Delivery do
   the same completed invoke. The default implementation gets that from
   `Statifier.Session.done_invocation/3` itself, which documents a second
   call for the same `invoke_id` as a harmless no-op.
+
+  ## Carrying the caller's trace context
+
+  `caller_context` (`st-ADR-0063`) is the opaque host slot the macrostep
+  that executed the `<invoke>` stamped onto the effect. It rides the job
+  args untouched (`StatifierOban.Invoke.JobArgs`) and is on the
+  `%Statifier.Effect.Invoke{}` the worker decodes days later, on another
+  node, byte-identical to what was enqueued. **The answer event owes it
+  onward**, unchanged, exactly as `StatifierOban.Timer.Delivery` says a
+  fired timer's event does: upstream puts the answering event's
+  `caller_context` on the macrostep telemetry the answer drives
+  (`[:statifier, :session, :macrostep, :start | :stop]`), which is what
+  lets `opentelemetry_statifier` link the completion back to the trace
+  that started the invocation instead of leaving it detached. Drop the
+  slot and the link is lost at the last hop, silently.
+
+  Which door gets it depends on who builds the event, and that differs
+  from the timer half:
+
+  - **A host driving `Statifier.Session`** does not build the event at
+    all - `Statifier.Session.done_invocation/3` and
+    `failed_invocation/3` build it inside the session and inherit the
+    slot from the session's own invocation table (`st-ADR-0063`). There
+    is nothing for such an implementation to carry, which is why
+    `StatifierOban.Invoke.Delivery.Session` implements only the
+    three-argument doors.
+  - **A process-less host** builds the event itself, with
+    `Statifier.Invoke.Answer.done/4` or `failed/4`, and has no
+    invocation table to inherit from - the job row is its record of the
+    invocation. That is what `c:deliver/4` and `c:deliver_failure/4`
+    are for: the same two doors, handed the slot off the row, to pass
+    straight into the builder's `caller_context:` option.
+
+  ## Two arities per door
+
+  Each door has a three-argument form and a four-argument one. The
+  three-argument forms are the contract and stay required; the
+  four-argument forms are optional, and `StatifierOban.Invoke.Worker`
+  calls the widest one a delivery module exports - the same "define the
+  wider arity when the work needs what it carries" shape
+  `StatifierOban.Invoke.Handler` gives `run/1` and `run/2`. A module
+  defining both runs through the four-argument form, and its
+  three-argument clause is dead code kept for the behaviour; a one-line
+  delegate is the usual way to satisfy it:
+
+      @impl StatifierOban.Invoke.Delivery
+      def deliver(scope, invoke_id, donedata), do: deliver(scope, invoke_id, donedata, [])
+
+  An existing implementation that defines neither four-argument form is
+  unaffected and keeps being called exactly as before. That is the whole
+  reason the widening is an added arity rather than a changed signature:
+  every `StatifierOban.Invoke.Delivery` written against 0.5.0 still
+  conforms.
   """
 
   @typedoc """
@@ -64,6 +117,56 @@ defmodule StatifierOban.Invoke.Delivery do
   """
   @callback deliver(scope :: String.t(), invoke_id :: String.t(), donedata :: term()) ::
               :delivered | {:discarded, discard_reason()}
+
+  @typedoc """
+  What the worker knows about the answer that the invoke id and the
+  donedata do not carry.
+
+  One key today, `:caller_context` - `st-ADR-0063`'s opaque host slot as
+  it was stored on the job row, or `nil` when no context was attached.
+  Pass it straight into `Statifier.Invoke.Answer.done/4`'s or
+  `failed/4`'s own `caller_context:` option; nothing in this package
+  reads it (ADR-0006 decision 7).
+
+  The list is open by construction: this package may add keys, so read
+  the ones you need with `Keyword.get/3` rather than matching the whole
+  list.
+  """
+  @type answer_opts :: [caller_context: term()]
+
+  @doc """
+  `c:deliver/3` with the answer's `t:answer_opts/0` - the arity to define
+  when the implementation **builds the answer event itself** and wants
+  the invocation's `caller_context` on it.
+
+  Optional. `StatifierOban.Invoke.Worker` calls this in preference to
+  `c:deliver/3` whenever a delivery module exports it, so an
+  implementation defining both is only ever reached here. Everything
+  `c:deliver/3` promises holds unchanged - the liveness check, the
+  return values, and the raise-rather-than-return rule for an
+  environment failure.
+
+      @impl StatifierOban.Invoke.Delivery
+      def deliver(scope, invoke_id, donedata, opts) do
+        if live?(scope) do
+          event =
+            Statifier.Invoke.Answer.done(scope, invoke_id, donedata,
+              caller_context: Keyword.get(opts, :caller_context)
+            )
+
+          MyApp.Runs.drive(scope, event)
+          :delivered
+        else
+          {:discarded, :terminated}
+        end
+      end
+  """
+  @callback deliver(
+              scope :: String.t(),
+              invoke_id :: String.t(),
+              donedata :: term(),
+              opts :: answer_opts()
+            ) :: :delivered | {:discarded, discard_reason()}
 
   @typedoc """
   What a permanently failed invocation reports about itself.
@@ -105,4 +208,30 @@ defmodule StatifierOban.Invoke.Delivery do
   """
   @callback deliver_failure(scope :: String.t(), invoke_id :: String.t(), failure :: failure()) ::
               :delivered | {:discarded, discard_reason()}
+
+  @doc """
+  `c:deliver_failure/3` with the answer's `t:answer_opts/0`, on
+  `c:deliver/4`'s terms exactly.
+
+  `failure` and `opts` stay separate lists for
+  `Statifier.Invoke.Answer.failed/4`'s own reason: `failure`'s three
+  keys become the chart-visible payload, and `:caller_context` is host
+  plumbing the datamodel never sees (`st-ADR-0063` decision 2).
+
+  The one asymmetry worth stating: an **undecodable** row reaches this
+  door with `caller_context: nil` even when a context was stored. The
+  opaque payload is exactly what failed to decode, so the slot is not
+  recoverable, while `scope` and `invoke_id` are read off the row as
+  plain strings and still name the invocation. An unlinked failure span
+  is the correct outcome there, and it is the same detached case a
+  never-attached context produces.
+  """
+  @callback deliver_failure(
+              scope :: String.t(),
+              invoke_id :: String.t(),
+              failure :: failure(),
+              opts :: answer_opts()
+            ) :: :delivered | {:discarded, discard_reason()}
+
+  @optional_callbacks deliver: 4, deliver_failure: 4
 end

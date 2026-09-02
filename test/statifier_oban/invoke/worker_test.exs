@@ -27,6 +27,47 @@ defmodule StatifierOban.Invoke.WorkerTest do
     end
   end
 
+  # The process-less host shape (sob-10x): builds the answer event itself
+  # with `Statifier.Invoke.Answer`, so it needs the invocation's
+  # caller_context off the job row. Defines both arities of both doors -
+  # the three-argument clauses are the behaviour's, and the worker must
+  # route past them to the four-argument ones.
+  defmodule ContextRecordingDelivery do
+    @moduledoc false
+    @behaviour Delivery
+
+    alias Statifier.Invoke.Answer
+
+    @impl Delivery
+    def deliver(scope, invoke_id, donedata), do: deliver(scope, invoke_id, donedata, [])
+
+    @impl Delivery
+    def deliver(scope, invoke_id, donedata, opts) do
+      event =
+        Answer.done(scope, invoke_id, donedata,
+          caller_context: Keyword.get(opts, :caller_context)
+        )
+
+      send(:invoke_worker_test_listener, {:answer_event, :done, event, opts})
+      :delivered
+    end
+
+    @impl Delivery
+    def deliver_failure(scope, invoke_id, failure),
+      do: deliver_failure(scope, invoke_id, failure, [])
+
+    @impl Delivery
+    def deliver_failure(scope, invoke_id, failure, opts) do
+      event =
+        Answer.failed(scope, invoke_id, failure,
+          caller_context: Keyword.get(opts, :caller_context)
+        )
+
+      send(:invoke_worker_test_listener, {:answer_event, :failed, event, opts})
+      :delivered
+    end
+  end
+
   # A host delivery module written before ADR-0005 added the second door.
   # Deliberately does not declare the behaviour - declaring it would make
   # the compiler, rather than the worker, be the thing under test.
@@ -452,7 +493,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
 
   # -- helpers ------------------------------------------------------------
 
-  defp args_for(scope, invoke_id, handler) do
+  defp args_for(scope, invoke_id, handler, caller_context \\ nil) do
     {:ok, args} =
       JobArgs.from_invoke(scope, handler, %Invoke{
         invoke_id: invoke_id,
@@ -465,7 +506,8 @@ defmodule StatifierOban.Invoke.WorkerTest do
         invoke_index: 0,
         macrostep: 1,
         microstep: 1,
-        round: 1
+        round: 1,
+        caller_context: caller_context
       })
 
     args
@@ -512,5 +554,132 @@ defmodule StatifierOban.Invoke.WorkerTest do
       Process.sleep(5)
       wait_until(check, attempts - 1)
     end
+  end
+
+  # -- caller_context across the round trip (st-ADR-0063, sob-10x) ---------
+
+  @caller_context %{"traceparent" => "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+
+  # sabotage: `deliver_done/4`'s arity test was flipped to prefer
+  # `deliver/3` wherever it exists - went red (the four-argument door was
+  # never reached, so no {:answer_event, ...} message arrived at all),
+  # reverted.
+  test "the row's caller_context reaches deliver/4 and lands on the done event" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_cc", "inv_cc", TestInvokeHandler, @caller_context),
+      meta: %{"delivery" => Atom.to_string(ContextRecordingDelivery)}
+    )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+
+    assert_received {:answer_event, :done, event, opts}
+
+    assert opts[:caller_context] == @caller_context
+    assert event.name == "done.invoke.inv_cc"
+    assert event.caller_context == @caller_context
+  end
+
+  # sabotage: `maybe_fail/7`'s `deliver_failure/5` call passed `nil`
+  # instead of `invoke.caller_context` - went red (the failure event came
+  # back with a nil slot while the done path still carried one),
+  # reverted.
+  test "a permanently failed invocation carries the same slot onto the error event" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_cc_fail", "inv_cc_fail", FailingRunHandler, @caller_context),
+      meta: %{"delivery" => Atom.to_string(ContextRecordingDelivery)},
+      max_attempts: 1
+    )
+
+    drain()
+
+    assert_received {:answer_event, :failed, event, opts}
+
+    assert opts[:caller_context] == @caller_context
+    assert event.name == "error.communication.invoke.inv_cc_fail"
+    assert event.caller_context == @caller_context
+    assert event.data["reason"] == "run_failed"
+  end
+
+  # sabotage: `deliver_done/4` was changed to send a literal
+  # `caller_context: %{}` rather than the effect's slot - went red (the
+  # nil case came back as an empty map, which is a context attached, not
+  # the absence of one), reverted.
+  test "an invocation with no context attached delivers a nil slot, not a fabricated one" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_cc_nil", "inv_cc_nil", TestInvokeHandler),
+      meta: %{"delivery" => Atom.to_string(ContextRecordingDelivery)}
+    )
+
+    assert %{success: 1} = drain()
+
+    assert_received {:answer_event, :done, event, opts}
+
+    assert opts[:caller_context] == nil
+    assert event.caller_context == nil
+  end
+
+  # sabotage: `deliver_done/4`'s arity check was removed so it called
+  # `delivery.deliver/4` unconditionally - went red (RecordingDelivery
+  # defines only the three-argument doors, so the job failed rather than
+  # succeeding). Reverted. This is the back-compatibility pin: an
+  # implementation written against 0.5.0 must keep working untouched.
+  test "a delivery defining only the three-argument doors is still called at that arity" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_cc_narrow", "inv_cc_narrow", TestInvokeHandler, @caller_context),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)}
+    )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+
+    assert_received {:delivered_via_seam, "sess_iw_cc_narrow", "inv_cc_narrow", _donedata}
+    refute_received {:answer_event, _kind, _event, _opts}
+  end
+
+  # Link-stitching parity with the timer path, at the event level. The ots
+  # bridge is not a test dependency here, so what is pinned is the fact
+  # the bridge consumes: the event an answered invocation feeds back
+  # carries the same slot, in the same field, that a fired timer's event
+  # does - which is what upstream puts on the macrostep telemetry the
+  # answer drives, and what the bridge turns into a link.
+  #
+  # sabotage: `JobArgs.to_invoke/1` rebuilt the effect with
+  # `caller_context: nil` - went red on the equality below (the invoke
+  # half went unlinked while the timer half stayed linked), reverted.
+  test "the answered invocation's event carries the slot the same way a fired timer's does" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_cc_parity", "inv_cc_parity", TestInvokeHandler, @caller_context),
+      meta: %{"delivery" => Atom.to_string(ContextRecordingDelivery)}
+    )
+
+    assert %{success: 1} = drain()
+    assert_received {:answer_event, :done, invoke_event, _opts}
+
+    timer_event =
+      StatifierOban.Timer.Delivery.fired_event("sess_iw_cc_parity", %Statifier.Effect.SendDelayed{
+        event: "reminder",
+        send_id: "s1",
+        id_from_author?: true,
+        delay_ms: 1,
+        ordinal: 1,
+        data: nil,
+        macrostep: 1,
+        microstep: 1,
+        round: 1,
+        caller_context: @caller_context
+      })
+
+    assert invoke_event.caller_context == timer_event.caller_context
+    assert invoke_event.caller_context == @caller_context
+
+    # Both are external events, so both reach the macrostep telemetry the
+    # bridge reads; neither path smuggles the slot into the payload the
+    # datamodel sees (st-ADR-0063 decision 2).
+    assert invoke_event.type == :external and timer_event.type == :external
+    refute is_map(invoke_event.data) and Map.has_key?(invoke_event.data, "caller_context")
   end
 end

@@ -20,13 +20,23 @@ defmodule StatifierOban.Invoke.JobArgs do
     mandatory because that counter restarts per chart run, and
     `macrostep` is what tells a state re-entry's fresh invocation apart
     from a crash replay of the old one.
-  - The two host-opaque fields, `params` and `content`, are arbitrary
-    terms with no JSON shape, so they ride as tagged
+  - The three host-opaque fields, `params`, `content` and
+    `caller_context`, are arbitrary terms with no JSON shape, so they
+    ride as tagged
     `:erlang.term_to_binary/1` payloads (`StatifierOban.OpaqueTerm`) and
     come back byte-identical. `from_invoke/4`'s optional codec runs over
     both fields' bytes and tags the payload with its module name
     (`StatifierOban.OpaqueTerm.Codec`); `to_invoke/1` reads whatever tag
     the stored row carries, regardless of what the reading caller passed.
+    `caller_context` is `st-ADR-0063`'s opaque host slot, stamped by the
+    macrostep that executed the `<invoke>`; it is stored so the answer
+    event can inherit it days later on another node, and the two
+    durability rules `StatifierOban.Timer.JobArgs` states for the timer
+    half bind a host's choice of term here identically. A row written
+    before this field existed carries no `"caller_context"` key and
+    decodes to `nil`, which is `st-ADR-0063`'s own "no context
+    attached" - so the field is additive over stored rows, not a
+    migration.
   - `handler` is the module name of the `StatifierOban.Invoke.Handler`
     implementation, written from a validated module at enqueue time and
     resolved back by the worker - a resolution failure there is
@@ -68,7 +78,9 @@ defmodule StatifierOban.Invoke.JobArgs do
   def from_invoke(scope, handler, %Invoke{} = invoke, codec \\ nil)
       when is_binary(scope) and is_atom(handler) do
     with {:ok, params} <- encode_term("params", invoke.params, codec),
-         {:ok, content} <- encode_term("content", invoke.content, codec) do
+         {:ok, content} <- encode_term("content", invoke.content, codec),
+         {:ok, caller_context} <-
+           encode_term("caller_context", invoke.caller_context, codec) do
       {:ok,
        %{
          "scope" => scope,
@@ -78,6 +90,7 @@ defmodule StatifierOban.Invoke.JobArgs do
          "src" => invoke.src,
          "params" => params,
          "content" => content,
+         "caller_context" => caller_context,
          "autoforward" => invoke.autoforward,
          "state_index" => invoke.state_index,
          "invoke_index" => invoke.invoke_index,
@@ -110,7 +123,8 @@ defmodule StatifierOban.Invoke.JobArgs do
          {:ok, microstep} <- fetch_non_neg_integer(args, "microstep"),
          {:ok, round} <- fetch_non_neg_integer(args, "round"),
          {:ok, params} <- OpaqueTerm.decode_field(args, "params"),
-         {:ok, content} <- OpaqueTerm.decode_field(args, "content") do
+         {:ok, content} <- OpaqueTerm.decode_field(args, "content"),
+         {:ok, caller_context} <- OpaqueTerm.decode_field(args, "caller_context") do
       {:ok, scope, handler,
        %Invoke{
          invoke_id: invoke_id,
@@ -118,6 +132,7 @@ defmodule StatifierOban.Invoke.JobArgs do
          src: Map.get(args, "src"),
          params: params,
          content: content,
+         caller_context: caller_context,
          autoforward: Map.get(args, "autoforward"),
          state_index: state_index,
          invoke_index: invoke_index,
