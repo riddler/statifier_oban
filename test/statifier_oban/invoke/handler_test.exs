@@ -380,6 +380,29 @@ defmodule StatifierOban.Invoke.HandlerTest do
     assert {:ok, "sess_invoke_codec", _handler, ^invoke} = JobArgs.to_invoke(args)
   end
 
+  # sabotage: `perform_start/3`'s `JobArgs.from_invoke/4` call was given an
+  # `%{invoke | caller_context: nil}` - went red (the stored row carried no
+  # caller_context payload at all), reverted.
+  test "the enqueued row stores the invoke effect's caller_context, opaquely" do
+    ctx = ctx_for("sess_invoke_cc")
+    context = %{"traceparent" => "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+    invoke = %{invoke_fixture("inv_cc") | caller_context: context}
+
+    assert :ok = Handler.perform(TestInvokeHandler, {:start, invoke}, ctx)
+
+    assert [%Oban.Job{args: args}] = stored_jobs("sess_invoke_cc", "inv_cc")
+
+    # Opaque row data, never a JSON field: st-ADR-0063 makes the slot an
+    # arbitrary host term, and ADR-0006 decision 7 keeps this package from
+    # reading it.
+    assert %{"t2b64" => _} = args["caller_context"]
+
+    # And it is not part of the dedup key, so it cannot be read from the
+    # top level the way `scope`/`invoke_id`/`macrostep` are.
+    assert {:ok, "sess_invoke_cc", _handler, rebuilt} = JobArgs.to_invoke(args)
+    assert rebuilt.caller_context == context
+  end
+
   # sabotage: `Worker`'s unique `keys` were widened from `[:scope,
   # :invoke_id, :macrostep]` to include `:params` - went red (the
   # nondeterministic codec's varying bytes made the replayed start's args

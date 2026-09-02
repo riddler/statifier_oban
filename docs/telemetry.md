@@ -374,6 +374,36 @@ host `Timer.Delivery` implementation owes the one hop this package cannot make
 for it: copying the slot onto the event it feeds back, which
 `fired_event/2` does for it.
 
+**The async invoke half round-trips it the same way, and hands it back at a
+different door.** `%Statifier.Effect.Invoke{}` carries the same slot
+(`st-ADR-0063`), `StatifierOban.Invoke.JobArgs` stores it beside `params` and
+`content` through the same opaque encoding and the same host codec, and
+`StatifierOban.Invoke.Worker` decodes it days later byte-identical. What
+differs from the timer half is who builds the answering event. A host driving
+`Statifier.Session` does not build one at all: `done_invocation/3` and
+`failed_invocation/3` build `done.invoke.<invoke_id>` and
+`error.communication.invoke.<invoke_id>` inside the session and inherit the
+slot from the session's own invocation table, so
+`StatifierOban.Invoke.Delivery.Session` has nothing to carry and implements
+only the three-argument doors. A process-less host builds the event itself
+with `Statifier.Invoke.Answer.done/4` or `failed/4`, and the job row is its
+only record of the invocation - which is what
+`c:StatifierOban.Invoke.Delivery.deliver/4` and
+`c:StatifierOban.Invoke.Delivery.deliver_failure/4` are for: the same two
+doors, handed the stored slot to pass into the builder's `caller_context:`
+option. The worker calls whichever arity a delivery module exports, so an
+implementation written before those arities existed is untouched. The one
+gap is a row whose opaque payload will not decode: the slot is exactly what
+failed, so the failure delivery reports `caller_context: nil` and the span is
+unlinked, while `scope` and `invoke_id` still name the invocation.
+
+A durable invocation is where the row's copy earns its keep over the
+session's. A run resumed after a node death rebuilds its invocation table
+from the persisted position, where `caller_context` is an optional entry key;
+the Oban row survives that death intact either way, so a process-less host
+answering from the row links the completion even when nothing else remembers
+the arming trace.
+
 **The bridge turns it into a link, never a parent.** On a delivery-seam event
 the bridge reads `caller_context`, extracts the traceparent, and adds a *link*
 to the span it opens for the firing; that span is a root with no parent at all,

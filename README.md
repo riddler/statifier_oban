@@ -303,8 +303,9 @@ leave-the-id-off guidance is retired.)
 
 ## Sensitive values in job args
 
-The four host-opaque job-arg fields (a timer's `data` and `caller_context`,
-an invoke's `params` and `content`) are stored in `oban_jobs.args` as
+The five host-opaque job-arg fields (a timer's `data` and `caller_context`,
+an invoke's `params`, `content` and `caller_context`) are stored in
+`oban_jobs.args` as
 Base64-encoded external term format - encoded, not protected. Anyone who can
 read the host's Oban table can read them.
 

@@ -41,6 +41,21 @@ defmodule StatifierOban.Invoke.Delivery.Session do
   upstream, so a check that diverged here would be this package
   contradicting the contract it implements.
 
+  ## Why only the three-argument doors
+
+  This module implements `c:StatifierOban.Invoke.Delivery.deliver/3` and
+  `c:StatifierOban.Invoke.Delivery.deliver_failure/3`, and deliberately
+  not their four-argument forms. Those exist to hand a delivery the
+  invocation's `caller_context` off the job row, for a host that builds
+  the answer event itself. This one builds nothing: `done_invocation/3`
+  and `failed_invocation/3` construct the event inside the session and
+  inherit the slot from the session's own invocation table (st-ADR-0063).
+  Accepting the row's copy here would mean either ignoring it - a door
+  that lies about what it does with its argument - or contradicting the
+  session's own record of the invocation. A process-less host is the one
+  with no such table, and `StatifierOban.Invoke.Delivery` documents the
+  wider arities for it.
+
   This module requires `Statifier.Supervisor` (which owns
   `Statifier.Registry`) to be running: `Registry.lookup/2` raises when it
   is not, and the job retries rather than discards - a missing registry
