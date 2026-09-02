@@ -35,15 +35,18 @@ the diff, every commit message on the branch, and the request title and body.
 Any hit is a hard stop - report the offending strings; do not rephrase and
 retry on your own.
 
-## The request is a record, not a review gate
+## The request is a record, not a human review gate
 
-One contributor, no CI. Nothing runs when the request opens, so the full
-`mix quality` before the push is the only verification this branch ever gets
-- treat a skipped or scoped gate on a branch that touches gated paths as a
-hard stop, not a formality to catch up on later. (A branch touching no gated
-paths has no gate to run; say so in the request body.) What the request is
-for is the record: a diff with a written rationale, linked to its bead, that
-can be read later.
+One contributor, so no second reviewer. CI does run - the same picture
+`.claude/wurk/commit.md` records: `.github/workflows/ci.yml` runs the
+manifest's `gate.full` on pushes to `main` and on pull requests. But it
+fires after the push, so the full `mix quality` before the push is still the
+only verification this branch gets before it leaves this machine. Treat a
+skipped or scoped gate on a branch that touches gated paths as a hard stop,
+not a formality to catch up on later and not one CI will cover for you. (A
+branch touching no gated paths has no gate to run; say so in the request
+body.) What the request is for is the record: a diff with a written
+rationale, linked to its bead, that can be read later.
 
 ## Cite branches and requests, not SHAs
 

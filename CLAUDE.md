@@ -172,7 +172,9 @@ check mode (`format: [check: true]` in `.quality.exs`): it reports drift and
 writes nothing, so run `mix format` yourself before committing.
 
 Set `STATIFIER_PATH` to a local statifier-ex checkout when co-developing a
-change that spans both repos; otherwise the git pin in `mix.lock` governs.
+change that spans both repos; otherwise `mix.exs` declares statifier as an
+ordinary Hex dependency (`{:statifier, "~> 2.2"}`) and the version `mix.lock`
+resolved it to governs.
 
 <!-- usage-rules-start -->
 ## ExQuality (`mix quality`)
