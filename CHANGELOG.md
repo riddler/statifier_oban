@@ -10,6 +10,25 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.6.0] 2026-09-02
+
+### Added
+
+- An async invocation's `caller_context` is stored on its Oban job row and
+  handed back when the invocation is answered, so a completion days later
+  still links to the trace that started it.
+- `StatifierOban.Invoke.Delivery` gains optional `deliver/4` and
+  `deliver_failure/4`, which receive that `caller_context` for a
+  process-less host building the answer event itself; implementations
+  defining only the three-argument doors are called exactly as before.
+
+### Changed
+
+- This package now requires `{:statifier, "~> 2.5"}`, the first release
+  carrying `%Statifier.Effect.Invoke{}.caller_context` and
+  `Statifier.Invoke.Answer.done/4` / `failed/4`. Upgrade statifier to 2.5.0
+  or later alongside this release.
+
 ## [0.5.0] 2026-09-01
 
 ### Added
