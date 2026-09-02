@@ -269,7 +269,9 @@ half of that bridge is therefore an obligation, not code: it is the promise
 that the events above carry everything the bridge needs, so the bridge never
 reads `oban_jobs.args`, `StatifierOban.Timer.JobArgs`, or any other internal
 here. Span construction, handler attachment, and the span table are the
-bridge repo's decisions and are not specified in this note.
+bridge repo's decisions and are not this note's to make; where a bullet below
+names one, it is reporting what `ots-ADR-0004` accepted, because a sentence
+here that contradicted that record would mislead a host reading both.
 
 What the events are built to let the bridge do:
 
@@ -278,22 +280,36 @@ What the events are built to let the bridge do:
   different key would be a run the bridge could not stitch to its own
   macrostep spans. The rename happens in the bridge, once, where the mapping
   is visible; this package keeps the honest name. Every other measurement and
-  metadata key maps by name into the `statifier.` namespace, as upstream's
-  attribute rule already specifies.
+  metadata key maps by name into the `statifier_oban.` namespace, *not* the
+  shared `statifier.` one: `ots-ADR-0004` decision 7 gives each bridged
+  sibling family its own prefix, because three families sharing one namespace
+  would make `statifier.reason` mean three different vocabularies.
+  `system_time` is dropped there as clock plumbing the span's own timestamps
+  already carry, and `caller_context` never becomes an attribute at all - it
+  becomes a link, per the bullet below.
 
-- **Scheduling-seam events are in the caller's trace, by ambient context.**
-  They are emitted synchronously on the process that drove the macrostep, so
-  the current OTel context is the scheduling side's - which is also the
-  process where upstream's macrostep span is open. They are span events on
-  it. No propagation machinery is involved.
+- **Scheduling-seam events land on the macrostep span, through the bridge's
+  own span table.** They are emitted synchronously on the process that drove
+  the macrostep, which is also the process where upstream's macrostep span is
+  open, and they become span events on it. The parent is found in the
+  bridge's pid-keyed span table, *not* in the process's ambient OTel context:
+  `ots-ADR-0003` decision 8 forbids the bridge from reading or writing that
+  context, and `ots-ADR-0004` decision 4 makes its own table the whole of the
+  nesting mechanism. Decision 6 adds the pid check - a `scope`'s macrostep
+  span is used only when the bridge's row for that scope names this very
+  process - so a `scope` that is a host's durable run id matches nothing and
+  the event becomes its own span instead. No propagation machinery is
+  involved either way.
 
-- **Delivery-seam events are in the *job's* trace, also by ambient context.**
-  They are emitted inside `perform/1`, and a host running
-  `opentelemetry_oban` already has a job span open in that same process.
-  This is the same in-process nesting `docs/opentelemetry.md` describes for
-  a durable macrostep span sitting inside "whatever step or job span the
-  persistence and Oban layers opened around it" - ordinary ambient context,
-  not this bridge's link machinery.
+- **Delivery-seam events are detached roots carrying a link, not spans inside
+  the job's trace.** They are emitted inside `perform/1`, days later and
+  usually on another node, where this bridge has nothing of its own open at
+  all - and because it never reads the ambient context, a job span a host's
+  `opentelemetry_oban` has open in that same process does not parent them
+  either. Each becomes its own zero-duration root span, linked to the arming
+  trace through `caller_context` (`ots-ADR-0004` decisions 5 and 8).
+  Correlation back to the run is by the `statifier.session_id` attribute
+  rather than by nesting.
 
 - **The scheduling trace is reached by a link, never by parenthood.** A timer
   that fires three days after it was armed does not belong inside the request
@@ -360,8 +376,10 @@ for it: copying the slot onto the event it feeds back, which
 
 **The bridge turns it into a link, never a parent.** On a delivery-seam event
 the bridge reads `caller_context`, extracts the traceparent, and adds a *link*
-to the span it opens for the firing; the firing's parent stays the ambient job
-span. Parenthood would hold the arming trace open for the length of the delay.
+to the span it opens for the firing; that span is a root with no parent at all,
+because the bridge has nothing of its own open on an Oban worker and does not
+read the job span a host's `opentelemetry_oban` may have open there.
+Parenthood on the arming trace would hold it open for the length of the delay.
 `nil` is the ordinary detached case - no context was attached, the fire is
 unlinked, and nothing is wrong.
 
