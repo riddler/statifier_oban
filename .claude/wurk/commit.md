@@ -54,7 +54,7 @@ section at release and removed.
 
 ## Version bump: never
 
-`mix.exs` holds `0.5.0` (release prepared 2026-09-01 on the `sob-a6o` bead;
+`mix.exs` holds `0.6.0` (release prepared 2026-09-02 on the `sob-jmr` bead;
 0.4.0, published 2026-09-01, is still the last version actually on Hex - the
 tag and the publish are the operator's) until a release bead says otherwise,
 and the authority table marks releases and version bumps as never an
