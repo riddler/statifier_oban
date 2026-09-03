@@ -35,7 +35,7 @@ defmodule StatifierOban.Timer do
   import Ecto.Query, only: [where: 3]
 
   alias Statifier.Effect.{Cancel, SendDelayed}
-  alias StatifierOban.{Config, Telemetry}
+  alias StatifierOban.{CancellableStates, Config, Telemetry}
   alias StatifierOban.Timer.{CancellationKey, JobArgs, Key, Worker}
 
   @typedoc "Why a SendDelayed effect could not be scheduled."
@@ -119,11 +119,12 @@ defmodule StatifierOban.Timer do
   statifier-ex.
 
   **A cancel only ever reaches a timer that has not fired.** The match is
-  restricted to the states a pending timer can be in - `suspended`,
-  `scheduled`, `available`, `retryable` - so a job that is `executing`
-  right now is never swept, and neither is one that already reached a
-  terminal state. Both stay out for the same reason: the timer has fired,
-  and a cancel that arrives after the fire loses the race. That is
+  restricted to the states a pending timer can be in - `scheduled`,
+  `available`, `retryable`, and on Oban 2.21 or later `suspended` - so
+  a job that is `executing` right now is never swept, and neither is one
+  that already reached a terminal state. Both stay out for the same
+  reason: the timer has fired, and a cancel that arrives after the fire
+  loses the race. That is
   spec-faithful - a real-time `<cancel>` can lose to a timer that already
   fired - and the run-liveness check the delivery seam owes (st-ADR-0054
   decision 4) is the guard on that side, not this one.
@@ -159,27 +160,17 @@ defmodule StatifierOban.Timer do
     end
   end
 
-  # Every non-terminal state except `executing` - the states a timer that
-  # has not fired can be in. `executing` is deliberately absent: see
-  # `cancel/3`'s docs - a delivery that cancels its own send_id would
-  # otherwise pkill itself (sob-uon). The terminal states are excluded by
-  # `Oban.cancel_all_jobs/2` anyway; naming the set positively here keeps
-  # the whole rule readable in one place, and `suspended` earns its place
-  # because a held job has not fired and would fire on resume.
-  #
-  # The list is literal rather than derived from `Oban.Job.states/1` so
-  # the package keeps compiling across the whole `~> 2.19` range. A new
-  # Oban state is therefore a review point here, which
-  # `StatifierOban.Timer.CancellableStatesTest` pins.
-  @cancellable_states ~w(suspended scheduled available retryable)
-
+  # The states a timer that has not fired can be in, intersected with
+  # what the installed Oban knows - see `StatifierOban.CancellableStates`
+  # for why `executing` is left out (sob-uon) and why the list is not a
+  # literal (sob-axb).
   @spec timer_jobs(CancellationKey.t()) :: Ecto.Query.t()
   defp timer_jobs(%CancellationKey{scope: scope, send_id: send_id}) do
     worker = Oban.Worker.to_string(Worker)
 
     Oban.Job
     |> where([j], j.worker == ^worker)
-    |> where([j], j.state in @cancellable_states)
+    |> where([j], j.state in ^CancellableStates.list())
     |> where([j], j.args["scope"] == ^scope and j.args["send_id"] == ^send_id)
   end
 end

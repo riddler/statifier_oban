@@ -32,10 +32,12 @@ defmodule StatifierOban.Invoke.CancellableStatesTest do
   end
 
   for state <- @pending_states do
-    # Sabotage: dropped `suspended` from @cancellable_states in
-    # handler.ex - went red on the suspended row (it survived its own
-    # cancel). Also narrowed the attribute to ~w(available), which took
-    # the scheduled and retryable rows red too. Both reverted.
+    # Sabotage: dropped `suspended` from @intended in
+    # StatifierOban.CancellableStates (re-run for sob-axb, when the list
+    # moved there) - went red on the suspended row (it survived its own
+    # cancel). Earlier, on the literal list in handler.ex, narrowing it
+    # to ~w(available) took the scheduled and retryable rows red too.
+    # All reverted.
     test "a #{state} invoke job is cancelled", context do
       scope = scope_for(context)
       id = stored_job_id(scope, "inv_states")
@@ -46,7 +48,8 @@ defmodule StatifierOban.Invoke.CancellableStatesTest do
     end
   end
 
-  # Sabotage: added `executing` to @cancellable_states - went red here
+  # Sabotage: added `executing` to @intended in
+  # StatifierOban.CancellableStates (re-run for sob-axb) - went red here
   # (the executing row came back "cancelled"). Reverted. SelfCancelTest
   # proves the same rule against a live process; this pins the query
   # itself, which is the part a host can reason about.
@@ -63,9 +66,9 @@ defmodule StatifierOban.Invoke.CancellableStatesTest do
   # vocabulary, not about `lib/`, so there is nothing in this repo to
   # mutate. (Adding a fictional state to the local list does take it red,
   # which only re-proves the assertion, not any behavior of ours.)
-  # It is the review point the literal @cancellable_states list in
-  # handler.ex names - a new Oban state lands here as a failure rather
-  # than as an invocation that silently stops being cancellable.
+  # It is the review point `StatifierOban.CancellableStates` names - a
+  # new Oban state lands here as a failure rather than as a job that
+  # silently stops being cancellable.
   test "the pending set plus executing plus the terminal set is all of Oban's states" do
     known = Enum.map(@pending_states ++ ["executing"] ++ @terminal_states, &String.to_atom/1)
 
