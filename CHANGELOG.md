@@ -10,6 +10,17 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.6.1] 2026-09-03
+
+### Fixed
+
+- `StatifierOban.Timer.cancel/3` and
+  `StatifierOban.Invoke.Handler.perform_cancel/3` no longer name the
+  `suspended` job state on an Oban older than 2.21.0, where Postgres rejected
+  it for the `oban_job_state` enum and every cancel raised; the cancellable
+  states are now taken from the installed Oban at call time, so the declared
+  `~> 2.19` floor holds.
+
 ## [0.6.0] 2026-09-02
 
 ### Added
