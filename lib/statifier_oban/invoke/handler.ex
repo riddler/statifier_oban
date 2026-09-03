@@ -150,7 +150,7 @@ defmodule StatifierOban.Invoke.Handler do
 
   alias Statifier.Effect.Invoke
   alias Statifier.Invoke.Handler, as: UpstreamHandler
-  alias StatifierOban.{Config, Telemetry}
+  alias StatifierOban.{CancellableStates, Config, Telemetry}
   alias StatifierOban.Invoke.{JobArgs, Worker}
 
   @typedoc """
@@ -366,10 +366,10 @@ defmodule StatifierOban.Invoke.Handler do
   unique key does.
 
   **A cancel only ever reaches a job that has not run.** The match is
-  restricted to the states a pending invocation can be in - `suspended`,
-  `scheduled`, `available`, `retryable` - so a job that is `executing`
-  right now is never swept, and neither is one that already reached a
-  terminal state.
+  restricted to the states a pending invocation can be in - `scheduled`,
+  `available`, `retryable`, and on Oban 2.21 or later `suspended` - so
+  a job that is `executing` right now is never swept, and neither is one
+  that already reached a terminal state.
 
   Leaving `executing` out is what makes the common self-cancel safe, for
   the same reason it does on the timer half (`StatifierOban.Timer.cancel/3`,
@@ -402,28 +402,17 @@ defmodule StatifierOban.Invoke.Handler do
     end
   end
 
-  # Every non-terminal state except `executing` - the states an invoke
-  # job that has not run can be in. `executing` is deliberately absent:
-  # see `perform_cancel/3`'s docs - a job whose own delivery drives the
-  # exit that cancels it would otherwise pkill itself (sob-84c, the
-  # invoke half of sob-uon). The terminal states are excluded by
-  # `Oban.cancel_all_jobs/2` anyway; naming the set positively here keeps
-  # the whole rule readable in one place, and `suspended` earns its place
-  # because a held job has not run and would run on resume.
-  #
-  # The list is literal rather than derived from `Oban.Job.states/1` so
-  # the package keeps compiling across the whole `~> 2.19` range. A new
-  # Oban state is therefore a review point here, which
-  # `StatifierOban.Invoke.CancellableStatesTest` pins.
-  @cancellable_states ~w(suspended scheduled available retryable)
-
+  # The states an invoke job that has not run can be in, intersected
+  # with what the installed Oban knows - see
+  # `StatifierOban.CancellableStates` for why `executing` is left out
+  # (sob-84c) and why the list is not a literal (sob-axb).
   @spec invoke_jobs(String.t(), String.t()) :: Ecto.Query.t()
   defp invoke_jobs(scope, invoke_id) do
     worker = Oban.Worker.to_string(Worker)
 
     Oban.Job
     |> where([j], j.worker == ^worker)
-    |> where([j], j.state in @cancellable_states)
+    |> where([j], j.state in ^CancellableStates.list())
     |> where([j], j.args["scope"] == ^scope and j.args["invoke_id"] == ^invoke_id)
   end
 

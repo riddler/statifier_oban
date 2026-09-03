@@ -30,11 +30,13 @@ defmodule StatifierOban.Timer.CancellableStatesTest do
   end
 
   for state <- @pending_states do
-    # sabotage: dropped `suspended` from @cancellable_states in timer.ex -
-    # went red on the suspended row (it survived its own cancel), which is
-    # the defect this generated test exists to catch. Also narrowed the
-    # attribute to ~w(available), which took the scheduled and retryable
-    # rows red too. Both reverted.
+    # sabotage: dropped `suspended` from @intended in
+    # StatifierOban.CancellableStates (re-run for sob-axb, when the list
+    # moved there) - went red on the suspended row (it survived its own
+    # cancel), which is the defect this generated test exists to catch.
+    # Earlier, on the literal list in timer.ex, narrowing it to
+    # ~w(available) took the scheduled and retryable rows red too. All
+    # reverted.
     test "a #{state} timer is cancelled", %{config: config, scope: scope} do
       id = scheduled_job_id(config, scope)
       force_state(id, unquote(state))
@@ -44,7 +46,8 @@ defmodule StatifierOban.Timer.CancellableStatesTest do
     end
   end
 
-  # sabotage: added `executing` to @cancellable_states - went red here
+  # sabotage: added `executing` to @intended in
+  # StatifierOban.CancellableStates (re-run for sob-axb) - went red here
   # (the executing row came back "cancelled" and the count was 1).
   # Reverted. SelfCancelTest proves the same rule against a live process;
   # this pins the query itself, which is the part a host can reason about.
@@ -61,9 +64,9 @@ defmodule StatifierOban.Timer.CancellableStatesTest do
   # vocabulary, not about `lib/`, so there is nothing in this repo to
   # mutate. (Adding a fictional state to the local list does take it red,
   # which only re-proves the assertion, not any behavior of ours.)
-  # It is the review point the literal @cancellable_states list in
-  # timer.ex names - a new Oban state lands here as a failure rather than
-  # as a timer that silently stops being cancellable.
+  # It is the review point `StatifierOban.CancellableStates` names - a
+  # new Oban state lands here as a failure rather than as a job that
+  # silently stops being cancellable.
   test "the pending set plus executing plus the terminal set is all of Oban's states" do
     known = Enum.map(@pending_states ++ ["executing"] ++ @terminal_states, &String.to_atom/1)
 
