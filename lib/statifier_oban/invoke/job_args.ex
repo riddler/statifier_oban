@@ -43,6 +43,13 @@ defmodule StatifierOban.Invoke.JobArgs do
     deploy-shaped (the module was renamed or removed after the job was
     stored) and retries, exactly like the timer worker's delivery module.
 
+  A **fan-out child start** job stores the same map with two fields
+  added, `for_child_start/3`'s `"index"` and `"child_count"` (ADR-0007
+  decision 4). The base map is unchanged by that widening, so a start
+  job's row decodes through `to_invoke/1` exactly as an ordinary invoke
+  job's does and the two kinds stay mutually readable during an
+  incident.
+
   `to_invoke/1` is the exact inverse of `from_invoke/4` for every
   `%Statifier.Effect.Invoke{}` the base handler enqueues: what the job
   carries is enough to hand the handler's `run/1` the same effect the
@@ -140,6 +147,56 @@ defmodule StatifierOban.Invoke.JobArgs do
          microstep: microstep,
          round: round
        }}
+    end
+  end
+
+  @doc """
+  Widens an invoke job's args into a fan-out child start job's args.
+
+  A child start job carries the whole invocation - the same fields
+  `from_invoke/4` laid out, opaque payloads and codec tag included, so
+  the starter seam is handed the effect the planning callback saw - plus
+  the two values that distinguish one child from its siblings:
+
+  - `"index"` is the item's zero-based position in the fanned-out list.
+    It rides at the top level because it is a **key component**:
+    `StatifierOban.Invoke.ChildStartWorker` is unique on the
+    four-component `{scope, invoke_id, macrostep, index}` (ADR-0007
+    decision 4), and Oban's uniqueness `keys` read args at the top
+    level.
+  - `"child_count"` is the list's length, and is row data rather than a
+    key component - two starts of the same index under the same
+    invocation are the same scheduling decision whatever the count says.
+    It travels because the seam's callback takes it: a starter that
+    records the child's slot needs to know how many slots there are, and
+    re-deriving it later would mean re-reading the parent.
+  """
+  @spec for_child_start(args(), non_neg_integer(), pos_integer()) :: args()
+  def for_child_start(args, index, count)
+      when is_map(args) and is_integer(index) and index >= 0 and
+             is_integer(count) and count > 0 and index < count do
+    Map.merge(args, %{"index" => index, "child_count" => count})
+  end
+
+  @doc """
+  Reads a child start job's `{index, count}` back off its args.
+
+  The rules are `to_invoke/1`'s: a missing or malformed field is a typed
+  error about the row rather than a raise, and the worker decides what
+  to do with it. A `"child_count"` of zero, or an `"index"` that is not
+  inside it, is `{:invalid_field, _, _}` for the same reason a negative
+  index would be - the row cannot be a child of any invocation.
+  """
+  @spec child_position(args()) ::
+          {:ok, non_neg_integer(), pos_integer()} | {:error, decode_error()}
+  def child_position(args) when is_map(args) do
+    with {:ok, index} <- fetch_non_neg_integer(args, "index"),
+         {:ok, count} <- fetch_non_neg_integer(args, "child_count") do
+      if index < count do
+        {:ok, index, count}
+      else
+        {:error, {:invalid_field, "index", index}}
+      end
     end
   end
 

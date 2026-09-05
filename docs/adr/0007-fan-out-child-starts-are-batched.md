@@ -231,3 +231,97 @@ The reopen triggers are two, both named above: `sp-3n2` landing a
 transactional child-creation guarantee (decision 3), and a version of Oban in
 which `insert_all/3` applies unique options, which would make the atomic
 slice rejected in decision 3 available without its cost.
+
+## Note (2026-09-05, sob-q3y): the bound is the queue's alone, and a hint below it is not honoured
+
+Decision 1's second bullet (`:74`) said a hint **below** the queue's limit
+"is the only case needing enforcement here", enforced "by the batch size:
+at most `max_concurrency` child starts are outstanding at once, the next
+slice going out as earlier children land." That sentence is reversed by
+this Note. **All N start jobs are enqueued up front. There are no slices,
+and a hint below the queue's limit is not honoured.**
+
+Two facts found while implementing the record did it, and neither was
+visible when it was written.
+
+**Decision 6's refill has no trigger.** Refill was to be driven by
+completions arriving at "the `done.invoke` and failure doors". Those doors
+*complete the invocation*: `sp-ADR-0007` decision 2 builds
+`done.invoke.<invoke_id>` and steps it, a compiled `core.map` carries one
+`<invoke>` and one `done.invoke` transition (`sb-ADR-0009` decision 3), and
+the core removes the `active_invocations` entry on exit. Under the shipped
+code the *first* child to finish would complete the whole map block, and a
+non-final child completion has no parent step to ride. So there is no door
+at which slice k+1 could go out. Building one means a re-dispatch of the
+invocation on every settlement, which is the parent-driven refill the scale
+walk (`R31-11`) declined to pull forward.
+
+**The bound the record actually wanted is already enforced without
+slicing.** Decision 1's first bullet is the whole mechanism: jobs sit
+`available` and the queue fetches them at its own limit. That is true of N
+jobs exactly as it is of a slice of them. Slicing changes when a row is
+*written*, not how many children *run*; the concurrency ceiling is the
+queue's either way. What slicing bought was a hint *below* the queue limit
+having an effect, and it bought it with durable state (a refill trigger, a
+resumable notion of "outstanding") that decision 5 spent its argument
+refusing.
+
+So `max_concurrency` is **shape-validated and clamped in both directions**:
+above the queue's limit the queue clamps it, silently and with no code
+here, exactly as the first bullet says; below it, it is accepted and not
+honoured. `sb-ADR-0009` decision 9's "clamped down silently rather than
+refused" still holds - the value the runtime uses is still never larger
+than the author asked for a *deployment* to run, because a hint has never
+reserved lanes (decision 1's own "the bound is per-deployment, not
+per-block"). What an author loses is the ability to make a fan-out slower
+than its queue allows, and the honest answer to that need was always
+decision 1's: give the fan-out its own queue, which is a deployment change.
+
+Decisions 2, 3, 4, 5, 7 and 8 are unchanged and this Note leans on them.
+Decision 4's four-component key is what makes enqueueing N up front safe to
+replay; decision 5's "progress is derived from the linkage set, never from
+a batch cursor" is *more* true with no batch to cursor over; decision 7's
+"batching may reorder execution freely" now reads as the queue's fetch
+order, which was always what it described. Decision 2's observably-partial
+fan-out survives too: N inserts are not one transaction, so a crash
+mid-enqueue still leaves some indices started and others not, and the
+resume is decision 5's difference against the linkage set.
+
+**Decision 6 is superseded in full**, not amended: with everything enqueued
+up front there is nothing to refill, so the completion doors carry no
+scheduling duty at all. The idempotency argument it ended on is retained
+elsewhere - a completion delivered twice cannot start a child twice, because
+decision 4's key makes the second enqueue a conflict.
+
+Recorded from the operator's `R31-11` (campaign 031, 2026-09-05), taken
+from the fan-out scale walk, and implemented by `sob-q3y` in
+`StatifierOban.Invoke.FanOut`.
+
+## Note (2026-09-05, sob-q3y): the cap gets a number, and the seam it needs
+
+Decision 8 declined to pick a number for the cap and left it to a host
+that measures one. Two things the record left open are settled here by the
+same operator ruling (`R31-9`), because the implementation cannot proceed
+without them.
+
+**The cap is a `StatifierOban.Config` key, `:max_fan_out`, defaulting to
+`1_000`.** A default is not a measurement, and this one does not pretend
+to be: 1,000 is the largest N anything in the three records has reasoned
+about, and a host that measures its own deployment raises or lowers it.
+What the default buys is that a fan-out of a hundred thousand items fails
+loudly on its first run rather than silently taking the database with it.
+The refusal is decision 8's, unchanged: the invocation fails on
+`error.communication.invoke.<invoke_id>`, with the count and the cap in the
+event's `detail`, checked **before the first child start** so a refused
+fan-out starts nothing at all. The compiler still validates nothing about
+N, and cannot: `items` is a datamodel path the handler evaluates.
+
+**Child runs are created through a host-wired seam, not by this package.**
+Nothing here depends on `statifier_persistence`, and decision 3's child-run
+creation "lives behind `sp-ADR-0003`'s adapter behaviour, which no Oban
+transaction reaches". So a start job reaches it the way a completed invoke
+reaches its run: through a module the host names in its config.
+`:child_starter` is that seam, beside `:invoke_delivery`, and its callback
+takes the parent run id, the effect, the index and the count. A host
+running `statifier_persistence` wires the start-with-index function that
+package ships for this; a host with its own run store wires its own.

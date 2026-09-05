@@ -45,6 +45,15 @@ defmodule StatifierOban.Invoke.Worker do
   outcomes map onto Oban states so each is observable on the job row:
 
   - work done and delivered -> the job completes (`:ok`);
+  - `run/1` returned `{:fan_out, items}` -> the invocation is N children
+    rather than an answer: `StatifierOban.Invoke.FanOut` enqueues one
+    start job per item and the job completes **without delivering**,
+    leaving the invocation open for the settlement side to answer once
+    (ADR-0007). A fan-out refused before any child starts - over the
+    cap, or a list that is not one - cancels with
+    `{:fan_out_refused, refusal}` and delivers
+    `error.communication.invoke.<invoke_id>` on the way past; one that
+    could not be scheduled right now retries;
   - the run is not live -> the job cancels with `{:discarded, reason}`
     recorded - a completed invoke against a dead or halted run is
     discarded the same way a fired timer is;
@@ -80,9 +89,9 @@ defmodule StatifierOban.Invoke.Worker do
 
   The `:reason` string on a failure delivery is this package's
   vocabulary to choose: st-ADR-0068 fixes the event and the payload
-  shape but interprets neither. Three classes are emitted - the two ways
-  `run/1` can exhaust its retries, and the one way a job is over before
-  `run/1` is ever reached:
+  shape but interprets neither. Four classes are emitted - the two ways
+  `run/1` can exhaust its retries, the one way a job is over before
+  `run/1` is ever reached, and the one way a fan-out is refused:
 
   - `"run_failed"` - the last attempt returned `{:error, reason}`.
     `:detail` is that reason, inspected.
@@ -91,11 +100,19 @@ defmodule StatifierOban.Invoke.Worker do
   - `"undecodable"` - the stored row could not be rebuilt into an
     effect, so the job cancels rather than retrying. `:detail` is the
     typed decode error, inspected.
+  - `"fan_out_refused"` - `run/1` asked to fan out and the fan-out was
+    refused before any child started, so the job cancels: no retry makes
+    a list shorter than the cap. `:detail` is
+    `t:StatifierOban.Invoke.FanOut.refusal/0` inspected, which carries
+    the count and the cap for the over-the-cap case (ADR-0007 decision
+    8). It is counts and constants only - the fanned-out list itself
+    never reaches the run this way.
 
   `:attempts` is the job's `attempt` on the try that gave up. For the
   two `run/1` classes that is the terminal attempt, which equals
-  `max_attempts`; for `"undecodable"` it is the attempt that found the
-  corrupt row, because that attempt cancels and there is no later one.
+  `max_attempts`; for `"undecodable"` and `"fan_out_refused"` it is the
+  attempt that found the fault, because that attempt cancels and there
+  is no later one.
 
   Of the failures that are *not* about the row, only `run/1`'s own
   exhaustion delivers. The environment errors above
@@ -114,7 +131,7 @@ defmodule StatifierOban.Invoke.Worker do
       states: Oban.Job.states()
     ]
 
-  alias StatifierOban.Invoke.JobArgs
+  alias StatifierOban.Invoke.{FanOut, JobArgs}
   alias StatifierOban.Telemetry
 
   @default_delivery StatifierOban.Invoke.Delivery.Session
@@ -144,6 +161,9 @@ defmodule StatifierOban.Invoke.Worker do
         ) :: :ok | {:cancel, term()} | {:error, term()}
   defp execute(job, delivery, scope, handler, invoke) do
     case run(job, delivery, scope, handler, invoke) do
+      {:fan_out, items, opts} ->
+        fan_out(job, delivery, scope, handler, invoke, items, opts)
+
       {:ok, donedata} ->
         # ADR-0006's delivery seam, the invoke half: the discard is a
         # completed invocation landing on a run that is no longer live,
@@ -161,6 +181,59 @@ defmodule StatifierOban.Invoke.Worker do
       {:error, {:run_failed, reason}} = failed ->
         maybe_fail(job, delivery, scope, handler, invoke, "run_failed", inspect(reason))
         failed
+    end
+  end
+
+  # The fan-out arm: this invocation is N children rather than an answer,
+  # so the job enqueues the starts and completes **without delivering**
+  # (ADR-0007). The invocation stays open until the settlement side
+  # answers it once, on behalf of all N.
+  #
+  # A refusal is delivered before the cancel for `fail_undecodable/2`'s
+  # reason: the job cancels rather than retrying - no retry makes a list
+  # shorter than the cap - so this attempt *is* the terminal one, and
+  # `:attempts` is its own `attempt`. A scheduling error retries instead,
+  # and starts nothing twice, because each start job's four-component key
+  # makes the replayed insert a conflict (ADR-0007 decision 4).
+  @spec fan_out(
+          Oban.Job.t(),
+          module(),
+          String.t(),
+          module(),
+          Statifier.Effect.Invoke.t(),
+          term(),
+          keyword()
+        ) :: :ok | {:cancel, term()} | {:error, term()}
+  defp fan_out(job, delivery, scope, handler, invoke, items, opts) do
+    case FanOut.start(handler.config(), job.args, items, opts) do
+      :ok ->
+        :ok
+
+      {:refused, refusal} ->
+        detail = inspect(refusal)
+
+        deliver_failure(
+          delivery,
+          scope,
+          invoke.invoke_id,
+          [reason: "fan_out_refused", attempts: job.attempt, detail: detail],
+          invoke.caller_context
+        )
+
+        Telemetry.invoke_failed(
+          scope,
+          handler,
+          invoke.invoke_id,
+          "fan_out_refused",
+          detail,
+          job.attempt,
+          job.id
+        )
+
+        {:cancel, {:fan_out_refused, refusal}}
+
+      {:error, reason} ->
+        {:error, {:fan_out_failed, reason}}
     end
   end
 
@@ -236,10 +309,15 @@ defmodule StatifierOban.Invoke.Worker do
           String.t(),
           module(),
           Statifier.Effect.Invoke.t()
-        ) :: {:ok, term()} | {:error, {:run_failed, term()}}
+        ) ::
+          {:ok, term()}
+          | {:fan_out, term(), keyword()}
+          | {:error, {:run_failed, term()}}
   defp run(job, delivery, scope, handler, invoke) do
     case call_run(handler, invoke, scope) do
       {:ok, donedata} -> {:ok, donedata}
+      {:fan_out, items} -> {:fan_out, items, []}
+      {:fan_out, items, opts} -> {:fan_out, items, opts}
       {:error, reason} -> {:error, {:run_failed, reason}}
     end
   rescue
@@ -270,7 +348,10 @@ defmodule StatifierOban.Invoke.Worker do
   # the uniqueness key), so there is nothing new to serialize and old
   # rows enqueued before this arity existed decode into it unchanged.
   @spec call_run(module(), Statifier.Effect.Invoke.t(), String.t()) ::
-          {:ok, term()} | {:error, term()}
+          {:ok, term()}
+          | {:fan_out, term()}
+          | {:fan_out, term(), keyword()}
+          | {:error, term()}
   defp call_run(handler, invoke, scope) do
     if function_exported?(handler, :run, 2) do
       handler.run(invoke, %{scope: scope, invoke_id: invoke.invoke_id})

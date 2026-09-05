@@ -172,4 +172,57 @@ defmodule StatifierOban.Invoke.JobArgsTest do
 
     assert rebuilt.caller_context == nil
   end
+
+  # -- the fan-out child position (ADR-0007 decision 4, sob-q3y) ----------
+
+  # sabotage: `for_child_start/3` wrote `"child_index"` instead of
+  # `"index"` - went red (the key Oban's uniqueness reads was absent and
+  # `child_position/1` reported it missing), reverted.
+  test "for_child_start/3 puts the index and the count at the top level" do
+    args = from_invoke!("sess_fcs", StatifierOban.TestInvokeHandler, @invoke)
+
+    widened = JobArgs.for_child_start(args, 2, 5)
+
+    assert widened["index"] == 2
+    assert widened["child_count"] == 5
+    assert widened["scope"] == "sess_fcs"
+    assert widened["invoke_id"] == @invoke.invoke_id
+  end
+
+  # sabotage: `child_position/1` returned the count and the index the
+  # other way round - went red (the round trip came back {5, 2}),
+  # reverted.
+  test "child_position/1 reads back what for_child_start/3 wrote, over JSON" do
+    args =
+      "sess_fcs_rt"
+      |> from_invoke!(StatifierOban.TestInvokeHandler, @invoke)
+      |> JobArgs.for_child_start(2, 5)
+      |> JSON.encode!()
+      |> JSON.decode!()
+
+    assert {:ok, 2, 5} = JobArgs.child_position(args)
+  end
+
+  # sabotage: `child_position/1`'s `index < count` test was dropped -
+  # went red (an index outside its own fan-out decoded cleanly),
+  # reverted.
+  test "child_position/1 rejects a row whose index is outside its count" do
+    args =
+      "sess_fcs_bad"
+      |> from_invoke!(StatifierOban.TestInvokeHandler, @invoke)
+      |> Map.merge(%{"index" => 5, "child_count" => 5})
+
+    assert {:error, {:invalid_field, "index", 5}} = JobArgs.child_position(args)
+  end
+
+  # sabotage: `child_position/1` used `Map.get/2` with a zero default -
+  # went red (a row with no position decoded as child 0 of 0), reverted.
+  test "child_position/1 reports a missing field rather than defaulting it" do
+    args = from_invoke!("sess_fcs_missing", StatifierOban.TestInvokeHandler, @invoke)
+
+    assert {:error, {:missing_field, "index"}} = JobArgs.child_position(args)
+
+    assert {:error, {:missing_field, "child_count"}} =
+             JobArgs.child_position(Map.put(args, "index", 0))
+  end
 end
