@@ -4,10 +4,11 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
 
   `StatifierOban.Invoke.FanOut` enqueues N of these up front, one per
   item, and each one calls the host-wired
-  `StatifierOban.Invoke.ChildStarter` seam for its own index. Creating
-  the run is the seam's; scheduling the call is this module's, which is
-  the whole of the division ADR-0007 draws between this package and the
-  one that owns durable runs.
+  `StatifierOban.Invoke.ChildStarter` seam for its own index, with the
+  fan-out's aggregation policy. Creating the run is the seam's;
+  scheduling the call is this module's, which is the whole of the
+  division ADR-0007 draws between this package and the one that owns
+  durable runs.
 
   ## The key
 
@@ -27,7 +28,7 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   - the seam returns `:ok` -> the job completes;
   - the seam returns `{:error, reason}` -> the job retries with
     `{:start_failed, reason}` recorded. A run store that is down or
-    contended is an environment fact, and `c:StatifierOban.Invoke.ChildStarter.start_child/4`
+    contended is an environment fact, and `c:StatifierOban.Invoke.ChildStarter.start_child/5`
     is idempotent on the index by contract, so retrying is what
     at-least-once means here;
   - the config names no `:child_starter`, or one this node cannot
@@ -35,8 +36,9 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
     same deploy-shaped environment error an unresolvable delivery module
     is;
   - the row will not decode, or does not carry a usable
-    `{index, count}` -> the job cancels with `{:undecodable, reason}`,
-    because no number of retries makes a corrupt row decodable.
+    `{index, count}` or a readable `"policy"` -> the job cancels with
+    `{:undecodable, reason}`, because no number of retries makes a
+    corrupt row decodable.
 
   Nothing here delivers into the run. A child start is not an answer:
   the invocation is answered once, by the settlement side, when every
@@ -55,14 +57,15 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
       states: Oban.Job.states()
     ]
 
-  alias StatifierOban.Invoke.JobArgs
+  alias StatifierOban.Invoke.{ChildStarter, JobArgs}
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta}) do
     with {:ok, scope, _handler, invoke} <- decode(args),
          {:ok, index, count} <- position(args),
+         {:ok, opts} <- seam_opts(args),
          {:ok, starter} <- starter_module(meta) do
-      start(starter, scope, invoke, index, count)
+      start(starter, scope, invoke, index, count, opts)
     end
   end
 
@@ -71,10 +74,11 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
           String.t(),
           Statifier.Effect.Invoke.t(),
           non_neg_integer(),
-          pos_integer()
+          pos_integer(),
+          ChildStarter.opts()
         ) :: :ok | {:error, term()}
-  defp start(starter, scope, invoke, index, count) do
-    case starter.start_child(scope, invoke, index, count) do
+  defp start(starter, scope, invoke, index, count, opts) do
+    case starter.start_child(scope, invoke, index, count, opts) do
       :ok -> :ok
       {:error, reason} -> {:error, {:start_failed, reason}}
     end
@@ -108,6 +112,18 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
     end
   end
 
+  # `position/1`'s rule, applied to the seam's option list: an
+  # unreadable `"policy"` is a fact about the row and no retry mends it.
+  # An absent one is not an error - `JobArgs.child_opts/1` reads it as
+  # `:all`, the aggregation an invocation that named none asked for.
+  @spec seam_opts(JobArgs.args()) :: {:ok, ChildStarter.opts()} | {:cancel, term()}
+  defp seam_opts(args) do
+    case JobArgs.child_opts(args) do
+      {:ok, opts} -> {:ok, opts}
+      {:error, reason} -> {:cancel, {:undecodable, reason}}
+    end
+  end
+
   # The starter rides in the job's meta, written from a validated
   # `StatifierOban.Config` at enqueue time, exactly as the delivery
   # module does on an invoke job: meta is not part of the unique fields,
@@ -127,7 +143,7 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   defp resolve(name) do
     module = String.to_existing_atom(name)
 
-    if Code.ensure_loaded?(module) and function_exported?(module, :start_child, 4) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :start_child, 5) do
       {:ok, module}
     else
       {:error, {:invalid_child_starter, name}}

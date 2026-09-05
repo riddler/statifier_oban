@@ -206,7 +206,7 @@ defmodule StatifierOban.Invoke.Worker do
           keyword()
         ) :: :ok | {:cancel, term()} | {:error, term()}
   defp fan_out(job, delivery, scope, handler, invoke, items, opts) do
-    case FanOut.start(handler.config(), job.args, items, opts) do
+    case FanOut.start(handler.config(), job.args, invoke, items, opts) do
       :ok ->
         :ok
 

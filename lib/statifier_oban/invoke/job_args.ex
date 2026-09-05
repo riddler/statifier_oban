@@ -43,12 +43,15 @@ defmodule StatifierOban.Invoke.JobArgs do
     deploy-shaped (the module was renamed or removed after the job was
     stored) and retries, exactly like the timer worker's delivery module.
 
-  A **fan-out child start** job stores the same map with two fields
-  added, `for_child_start/3`'s `"index"` and `"child_count"` (ADR-0007
-  decision 4). The base map is unchanged by that widening, so a start
-  job's row decodes through `to_invoke/1` exactly as an ordinary invoke
-  job's does and the two kinds stay mutually readable during an
-  incident.
+  A **fan-out child start** job stores the same map with three fields
+  added, `for_child_start/4`'s `"index"`, `"child_count"` and
+  `"policy"` (ADR-0007 decision 4). The base map is unchanged by that
+  widening, so a start job's row decodes through `to_invoke/1` exactly
+  as an ordinary invoke job's does and the two kinds stay mutually
+  readable during an incident. All three ride as explicit JSON values
+  rather than through the opaque-term codec: they are this package's own
+  scheduling facts with a JSON shape, not host terms, and a value the
+  codec owns cannot be read off the row during an incident.
 
   `to_invoke/1` is the exact inverse of `from_invoke/4` for every
   `%Statifier.Effect.Invoke{}` the base handler enqueues: what the job
@@ -57,6 +60,7 @@ defmodule StatifierOban.Invoke.JobArgs do
   """
 
   alias Statifier.Effect.Invoke
+  alias StatifierOban.Invoke.ChildStarter
   alias StatifierOban.OpaqueTerm
 
   @typedoc "String-keyed args map as Oban stores and redelivers it."
@@ -156,7 +160,7 @@ defmodule StatifierOban.Invoke.JobArgs do
   A child start job carries the whole invocation - the same fields
   `from_invoke/4` laid out, opaque payloads and codec tag included, so
   the starter seam is handed the effect the planning callback saw - plus
-  the two values that distinguish one child from its siblings:
+  the three values that say which child of which fan-out it is:
 
   - `"index"` is the item's zero-based position in the fanned-out list.
     It rides at the top level because it is a **key component**:
@@ -170,12 +174,54 @@ defmodule StatifierOban.Invoke.JobArgs do
     It travels because the seam's callback takes it: a starter that
     records the child's slot needs to know how many slots there are, and
     re-deriving it later would mean re-reading the parent.
+  - `"policy"` is the invocation's aggregation policy as its wire word,
+    `"all"` or `"first_error"`. It is row data for the same reason
+    `"child_count"` is, and it travels for a sharper one: the settlement
+    side records the policy on **each child's own linkage** at creation,
+    so the value has to reach `c:StatifierOban.Invoke.ChildStarter.start_child/5`
+    at every index rather than be looked up once.
+
+  The policy is one of two constants rather than an arbitrary term, so
+  it is written as itself and read back by `child_opts/1`; nothing here
+  goes through the opaque-term codec.
   """
-  @spec for_child_start(args(), non_neg_integer(), pos_integer()) :: args()
-  def for_child_start(args, index, count)
+  @spec for_child_start(args(), non_neg_integer(), pos_integer(), ChildStarter.policy()) ::
+          args()
+  def for_child_start(args, index, count, policy)
       when is_map(args) and is_integer(index) and index >= 0 and
-             is_integer(count) and count > 0 and index < count do
-    Map.merge(args, %{"index" => index, "child_count" => count})
+             is_integer(count) and count > 0 and index < count and
+             policy in [:all, :first_error] do
+    Map.merge(args, %{
+      "index" => index,
+      "child_count" => count,
+      "policy" => Atom.to_string(policy)
+    })
+  end
+
+  @doc """
+  Reads a child start job's seam options back off its args.
+
+  Returns the keyword list
+  `c:StatifierOban.Invoke.ChildStarter.start_child/5` is handed:
+  `[policy: :all]` or `[policy: :first_error]`.
+
+  A row carrying **no** `"policy"` reads as `[policy: :all]` rather than
+  as an error. `:all` is the aggregation an absent `on` parameter means
+  on the way in, so it is what an absent field means on the way out too,
+  and a start job stored before this field existed then starts the child
+  it was always going to start. A `"policy"` carrying anything else is
+  `{:invalid_field, _, _}`, on `to_invoke/1`'s rule: a value that is not
+  one of the two words is a fact about the row, and the worker decides
+  what to do with it.
+  """
+  @spec child_opts(args()) :: {:ok, ChildStarter.opts()} | {:error, decode_error()}
+  def child_opts(args) when is_map(args) do
+    case Map.get(args, "policy") do
+      nil -> {:ok, [policy: :all]}
+      "all" -> {:ok, [policy: :all]}
+      "first_error" -> {:ok, [policy: :first_error]}
+      other -> {:error, {:invalid_field, "policy", other}}
+    end
   end
 
   @doc """
