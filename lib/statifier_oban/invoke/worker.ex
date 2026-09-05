@@ -106,7 +106,8 @@ defmodule StatifierOban.Invoke.Worker do
     `t:StatifierOban.Invoke.FanOut.refusal/0` inspected, which carries
     the count and the cap for the over-the-cap case (ADR-0007 decision
     8). It is counts and constants only - the fanned-out list itself
-    never reaches the run this way.
+    never reaches the run this way. The class is ADR-0005's, added to
+    its decision 3 by that record's 2026-09-05 Note.
 
   `:attempts` is the job's `attempt` on the try that gave up. For the
   two `run/1` classes that is the terminal attempt, which equals
