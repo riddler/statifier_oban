@@ -54,8 +54,10 @@ defmodule StatifierOban.Invoke.FanOut do
 
   A refusal is delivered on the invocation's ordinary error route,
   `error.communication.invoke.<invoke_id>`, exactly as ADR-0007 decision
-  8 requires and as an exhausted `run/1` already is. It is not a compile
-  finding and not a validation finding: the compiler never sees N.
+  8 requires and as an exhausted `run/1` already is, under the failure
+  class `"fan_out_refused"` that ADR-0005's 2026-09-05 Note adds to that
+  record's decision 3. It is not a compile finding and not a validation
+  finding: the compiler never sees N.
 
   **The empty list is refused rather than answered**, and that is a
   deliberately conservative reading of a gap. A fan-out of zero children

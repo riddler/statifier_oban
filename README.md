@@ -322,8 +322,20 @@ The seam's callback takes the **parent run id, the effect, the index and
 the count**, and must be idempotent on `{parent run id, invoke_id, index}` -
 a start job is at-least-once like every other job here. A host running
 [statifier_persistence](https://github.com/riddler/statifier_persistence)
-wires the start-with-index function that package ships for this; a host with
-its own run store wires its own:
+wires that package's
+
+```elixir
+StatifierPersistence.Driver.start_child_at(
+  driver, parent_run_id, effect, index, count, policy: :all | :first_error
+) :: :ok | {:refused, term()}
+```
+
+(0-based `index`, `count` = N, and `effect` accepted either as the resolved
+`%Statifier.Effect.Invoke{}` or as the whole `{:start_child, ...}`
+instruction). The host's module is what holds the driver and chooses the
+aggregation policy - neither is on this seam, because neither is a
+scheduling fact. A host with its own run store wires its own function
+instead:
 
 ```elixir
 {:ok, config} =

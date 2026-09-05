@@ -232,7 +232,7 @@ transactional child-creation guarantee (decision 3), and a version of Oban in
 which `insert_all/3` applies unique options, which would make the atomic
 slice rejected in decision 3 available without its cost.
 
-## Note (2026-09-05, sob-q3y): the bound is the queue's alone, and a hint below it is not honoured
+## Note (2026-09-05): the bound is the queue's alone, and a hint below it is not honoured
 
 Decision 1's second bullet (`:74`) said a hint **below** the queue's limit
 "is the only case needing enforcement here", enforced "by the batch size:
@@ -297,12 +297,13 @@ Recorded from the operator's `R31-11` (campaign 031, 2026-09-05), taken
 from the fan-out scale walk, and implemented by `sob-q3y` in
 `StatifierOban.Invoke.FanOut`.
 
-## Note (2026-09-05, sob-q3y): the cap gets a number, and the seam it needs
+## Note (2026-09-05): the cap gets a number, and the seam it needs
 
 Decision 8 declined to pick a number for the cap and left it to a host
 that measures one. Two things the record left open are settled here by the
-same operator ruling (`R31-9`), because the implementation cannot proceed
-without them.
+operator's ruling `R31-9` (campaign 031, 2026-09-05), taken from the same
+fan-out scale walk as Note 1's `R31-11`, because the implementation cannot
+proceed without them.
 
 **The cap is a `StatifierOban.Config` key, `:max_fan_out`, defaulting to
 `1_000`.** A default is not a measurement, and this one does not pretend

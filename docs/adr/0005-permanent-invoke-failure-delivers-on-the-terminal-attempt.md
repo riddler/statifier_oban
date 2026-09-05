@@ -202,3 +202,61 @@ than the typed term, for the serialization reason decision 4 already gives.
 The reopen trigger is a host that needs an undecodable row to retry rather
 than cancel - that would put the arm back under `maybe_fail/6`'s terminal-
 attempt rule and make this amendment wrong.
+
+## Note (2026-09-05): a fourth failure class, for a fan-out refused before it starts
+
+Decision 3 above says:
+
+> **3. Two failure classes: `"run_failed"` and `"run_crashed"`.** The
+> vocabulary is this package's, per st-ADR-0068.
+
+and the 2026-08-29 amendment added a third, `"undecodable"`, for a row that
+cancels rather than retrying. `sob-q3y` adds a fourth for the same structural
+reason the third exists: a new way for an invocation to be permanently over
+that decision 3's two classes do not name, reported through the door this
+record already built. As with the amendment, **no new event name, function or
+error family is created** - the event is still
+`error.communication.invoke.<invoke_id>`, the door is still
+`deliver_failure/3`, and `:detail` is still a string (decision 4). This Note
+adds to decision 3 and revises nothing else in this record.
+
+**The class is `"fan_out_refused"`.** ADR-0007 decision 8 says a fan-out
+exceeding a host's cap is "a **failure of the invocation**, carried on
+`error.communication.invoke.<block id>` with `st-ADR-0068`'s payload, not a
+compile finding and not a validation finding", and that record's 2026-09-05
+Note gives the cap a number (`StatifierOban.Config`'s `:max_fan_out`). A
+handler that returns `{:fan_out, items}` and is refused therefore needs a
+`"reason"`, and reusing `"run_failed"` would be wrong twice over: `run/1` did
+not fail, it succeeded and asked to fan out, and decision 3 pins that class to
+a terminal attempt returning `{:error, reason}`.
+
+**`:detail` carries counts and constants only.** It is the refusal inspected -
+`%{reason: :cap_exceeded, count: N, cap: C}` when the list is longer than
+`:max_fan_out`, `%{reason: :empty_items}` when it is empty, and
+`%{reason: :invalid_items}` when the handler returned something that is not a
+list. The two integers are what ADR-0007's Note requires the chart to be told;
+what the list *holds* is host data and never travels, for the reason ADR-0006
+decision 9 gives about putting unvalidated host state on an event.
+
+**`:attempts` is that attempt, not `max_attempts`**, exactly as the
+2026-08-29 amendment ruled for `"undecodable"` and for its reason. A refusal
+is decided **before the first child start**, from the list alone, so no number
+of retries makes it come out differently: the attempt that discovers it *is*
+the invocation's last one, and the job cancels rather than retrying. Delivering
+the count the job actually ran keeps `:attempts` meaning "how many attempts
+this invocation got" on all four arms.
+
+**This is not the terminal-attempt rule being widened.** `maybe_fail/6` still
+delivers only at `attempt >= max_attempts`, and the two `run/1` classes still
+reach the door only through it. The refusal takes the same shape the
+undecodable arm takes - deliver on the way past, then return the cancel - and
+decision 1's reading of the job row is untouched.
+
+**Not decided here: the empty fan-out's semantics.** This Note records that an
+empty `items` list is *refused* and how that refusal reaches the chart. Whether
+an empty `core.map` ought instead to answer with an empty result is a question
+for the record that owns what the block does with its answers, and is filed
+there rather than settled here.
+
+Recorded from the operator's ruling `RQ-031-1` option (a) (campaign 031,
+2026-09-05), and implemented by `sob-q3y` in `StatifierOban.Invoke.Worker`.
