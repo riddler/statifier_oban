@@ -182,6 +182,31 @@ defmodule StatifierOban.Invoke.Handler do
           optional(atom()) => term()
         }
 
+  @typedoc """
+  The fan-out return: this invocation is N children, not one result.
+
+  `items` is the **evaluated** list - `sb-ADR-0009` decision 3 compiles
+  the `items` datamodel path into the `<param>` list and makes the
+  handler what evaluates it, and a job has the effect but no datamodel,
+  so a handler that fans out reads the list off `invoke.params` (or
+  builds it however it likes) and returns it here. Only its length is
+  read by this package; what the items are is the handler's business,
+  and each one is bound to its child by the
+  `StatifierOban.Invoke.ChildStarter` seam.
+
+  `opts` carries `:max_concurrency`, the author's hint, when the block
+  declared one. It is shape-validated and then clamped to the queue's
+  own limit in both directions - see `StatifierOban.Invoke.FanOut`.
+
+  A handler returning this delivers no `done.invoke`: the invocation
+  stays open until the settlement side answers it once, on behalf of
+  all N. A fan-out refused before any child starts - over
+  `:max_fan_out`, or not a list - fails the invocation on
+  `error.communication.invoke.<invoke_id>` instead (ADR-0007 decision
+  8).
+  """
+  @type fan_out :: {:fan_out, items :: list()} | {:fan_out, items :: list(), opts :: keyword()}
+
   @typedoc "Why a start or cancel could not be performed."
   @type perform_error ::
           {:missing_option, :invoke_queue}
@@ -204,8 +229,13 @@ defmodule StatifierOban.Invoke.Handler do
   back to the run as `done.invoke.<invoke_id>`; `{:error, reason}` and
   raises both make the job retry, and exhausting the retries delivers
   `error.communication.invoke.<invoke_id>` instead.
+
+  `{:fan_out, items}` (or `{:fan_out, items, opts}`) is the third
+  answer, and it is not an answer at all: it says this invocation is
+  **N children rather than one result**. See `t:fan_out/0`.
   """
-  @callback run(invoke :: Invoke.t()) :: {:ok, donedata :: term()} | {:error, term()}
+  @callback run(invoke :: Invoke.t()) ::
+              {:ok, donedata :: term()} | fan_out() | {:error, term()}
 
   @doc """
   The same work, handed the job's `t:run_ctx/0` as well as the effect -
@@ -233,7 +263,7 @@ defmodule StatifierOban.Invoke.Handler do
       end
   """
   @callback run(invoke :: Invoke.t(), ctx :: run_ctx()) ::
-              {:ok, donedata :: term()} | {:error, term()}
+              {:ok, donedata :: term()} | fan_out() | {:error, term()}
 
   @optional_callbacks run: 1, run: 2
 

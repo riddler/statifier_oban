@@ -118,4 +118,73 @@ defmodule StatifierOban.ConfigTest do
                bogus: 1
              )
   end
+
+  # -- the fan-out options (ADR-0007, sob-q3y) -----------------------------
+
+  # sabotage: `:child_starter` was dropped from the defstruct's nil list -
+  # went red at compile (the struct had no such key), reverted.
+  test "new/1 defaults :child_starter to nil" do
+    assert {:ok, %Config{child_starter: nil}} = Config.new(oban: MyHost.Oban, timers_queue: :t)
+  end
+
+  # sabotage: `fetch_optional_module/2` was made to ignore its `key` and
+  # always read `:opaque_codec` - went red (the starter came back nil),
+  # reverted.
+  test "new/1 keeps a :child_starter module" do
+    assert {:ok, %Config{child_starter: MyHost.Starter}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, child_starter: MyHost.Starter)
+  end
+
+  # sabotage: `fetch_optional_module/2`'s guard clause was replaced with a
+  # catch-all - went red (a string built a config instead of erroring),
+  # reverted.
+  test "new/1 rejects a :child_starter that is not a module" do
+    assert {:error, {:invalid_option, :child_starter, "MyHost.Starter"}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, child_starter: "MyHost.Starter")
+
+    assert {:error, {:invalid_option, :child_starter, true}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, child_starter: true)
+  end
+
+  # The default is ADR-0007 decision 8's cap, given a number by R31-9.
+  #
+  # sabotage: `@default_max_fan_out` was changed to 10 - went red here and
+  # on the moduledoc's default, reverted.
+  test "new/1 defaults :max_fan_out to 1_000" do
+    assert {:ok, %Config{max_fan_out: 1_000}} = Config.new(oban: MyHost.Oban, timers_queue: :t)
+  end
+
+  # sabotage: `fetch_max_fan_out/1` ignored the option and always returned
+  # the default - went red (the host's 50 came back as 1_000), reverted.
+  test "new/1 keeps a host's :max_fan_out" do
+    assert {:ok, %Config{max_fan_out: 50}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, max_fan_out: 50)
+  end
+
+  # sabotage: `fetch_max_fan_out/1`'s guard dropped `cap > 0` - went red
+  # (zero and a negative cap both built configs), reverted.
+  test "new/1 rejects a :max_fan_out that is not a positive integer" do
+    assert {:error, {:invalid_option, :max_fan_out, 0}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, max_fan_out: 0)
+
+    assert {:error, {:invalid_option, :max_fan_out, -1}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, max_fan_out: -1)
+
+    assert {:error, {:invalid_option, :max_fan_out, "1000"}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, max_fan_out: "1000")
+  end
+
+  # sabotage: `:child_starter` and `:max_fan_out` were dropped from
+  # `@known_options` - went red here and on their doctests (correctly
+  # spelled options were rejected as unknown), reverted.
+  test "new/1 accepts both fan-out options alongside the rest" do
+    assert {:ok, %Config{child_starter: MyHost.Starter, max_fan_out: 7}} =
+             Config.new(
+               oban: MyHost.Oban,
+               timers_queue: :t,
+               invoke_queue: :i,
+               child_starter: MyHost.Starter,
+               max_fan_out: 7
+             )
+  end
 end

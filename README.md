@@ -276,6 +276,72 @@ across its variants uses the same two doors:
   records one conversion rather than two - which is the difference between an
   A/B result and a fiction.
 
+### Fan-out: one invocation, N children
+
+A `core.map`-shaped block is one invocation that becomes N child runs, one
+per item, with their answers accumulated into one result. This package
+schedules that; it does not create runs. A handler fans out by returning
+`{:fan_out, items}` instead of `{:ok, donedata}`:
+
+```elixir
+defmodule MyApp.MapHandler do
+  use StatifierOban.Invoke.Handler
+
+  @impl StatifierOban.Invoke.Handler
+  def config, do: MyApp.statifier_oban_config()
+
+  @impl StatifierOban.Invoke.Handler
+  def run(invoke) do
+    # The compiled block carries the `items` datamodel path, so the
+    # evaluated list arrives in `params`. Fan out over descriptors - ids,
+    # ranges - not over row payloads: the list lives in the parent run's
+    # datamodel for the run's whole life.
+    {:fan_out, invoke.params["items"], max_concurrency: invoke.params["max_concurrency"]}
+  end
+end
+```
+
+That return says "this invocation is N children, not an answer": the job
+enqueues one start job per index and completes **without delivering**, and
+the invocation stays open until the settlement side answers it once, on
+behalf of all N. All N start jobs go out up front - there are no slices, and
+the queue's own concurrency limit is what bounds how many children run at
+once. An author's `max_concurrency` is shape-validated and clamped to that
+limit in both directions; a hint below it is not honoured (ADR-0007 and its
+2026-09-05 Note). A fan-out isolated from a host's other async work gets its
+own queue, which is a deployment change.
+
+Two config options belong to this half:
+
+| Option | Default | What it is |
+|---|---|---|
+| `:child_starter` | `nil` | the module implementing `StatifierOban.Invoke.ChildStarter` that each start job creates its child through - the seam, because this package creates no runs |
+| `:max_fan_out` | `1_000` | the cap on a fan-out's width, checked before the first child start; a wider fan-out starts nothing and fails the invocation on `error.communication.invoke.<invoke_id>` with the count and the cap in `detail` |
+
+The seam's callback takes the **parent run id, the effect, the index and
+the count**, and must be idempotent on `{parent run id, invoke_id, index}` -
+a start job is at-least-once like every other job here. A host running
+[statifier_persistence](https://github.com/riddler/statifier_persistence)
+wires the start-with-index function that package ships for this; a host with
+its own run store wires its own:
+
+```elixir
+{:ok, config} =
+  StatifierOban.Config.new(
+    oban: MyApp.Oban,
+    timers_queue: :statifier_timers,
+    invoke_queue: :statifier_invokes,
+    child_starter: MyApp.ChildStarter,
+    max_fan_out: 500
+  )
+```
+
+When a fan-out fails and the remaining children have to be cancelled, the
+children that already exist are cancelled as runs by whoever owns them;
+`StatifierOban.Invoke.FanOut.cancel_unstarted/3` is the other door, for the
+indices whose start job has not run yet and which therefore have no run
+record to cancel.
+
 ## The contract this package implements
 
 The host-facing pattern is already specified upstream, and this package is one
