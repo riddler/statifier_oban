@@ -318,11 +318,38 @@ Two config options belong to this half:
 | `:child_starter` | `nil` | the module implementing `StatifierOban.Invoke.ChildStarter` that each start job creates its child through - the seam, because this package creates no runs |
 | `:max_fan_out` | `1_000` | the cap on a fan-out's width, checked before the first child start; a wider fan-out starts nothing and fails the invocation on `error.communication.invoke.<invoke_id>` with the count and the cap in `detail` |
 
-The seam's callback takes the **parent run id, the effect, the index and
-the count**, and must be idempotent on `{parent run id, invoke_id, index}` -
-a start job is at-least-once like every other job here. A host running
+The seam's callback takes five values - the **parent run id, the effect,
+the index, the count, and an option list** - and must be idempotent on
+`{parent run id, invoke_id, index}`, because a start job is at-least-once
+like every other job here:
+
+```elixir
+@impl StatifierOban.Invoke.ChildStarter
+def start_child(parent_run_id, invoke, index, count, opts) do
+  StatifierPersistence.Driver.start_child_at(
+    MyApp.driver(), parent_run_id, invoke, index, count, opts
+  )
+  |> case do
+    :ok -> :ok
+    {:refused, reason} -> {:error, reason}
+  end
+end
+```
+
+`opts` carries `policy: :all | :first_error`, the invocation's aggregation
+policy, and is where a later scheduling fact would arrive too - so read the
+keys you know and ignore the rest. The policy is read off the `core.map`
+invocation's own `on` parameter: `"all"`, `"first_error"`, or absent, which
+means `:all`. An `on` that is neither word refuses the fan-out on
+`error.communication.invoke.<invoke_id>` rather than defaulting, because
+`:all` and `:first_error` differ in whether a failing child cancels its
+siblings. It rides on every start job rather than being held once by the
+starter module, because the settlement side records it on **each child's
+own linkage** at creation.
+
+A host running
 [statifier_persistence](https://github.com/riddler/statifier_persistence)
-wires that package's
+passes it straight through to that package's
 
 ```elixir
 StatifierPersistence.Driver.start_child_at(
@@ -330,12 +357,11 @@ StatifierPersistence.Driver.start_child_at(
 ) :: :ok | {:refused, term()}
 ```
 
-(0-based `index`, `count` = N, and `effect` accepted either as the resolved
+(0-based `index`, `count` = N, `effect` accepted either as the resolved
 `%Statifier.Effect.Invoke{}` or as the whole `{:start_child, ...}`
-instruction). The host's module is what holds the driver and chooses the
-aggregation policy - neither is on this seam, because neither is a
-scheduling fact. A host with its own run store wires its own function
-instead:
+instruction, and `opts` the same keyword list this seam is handed). The
+host's module is what holds the driver; a host with its own run store
+wires its own function instead:
 
 ```elixir
 {:ok, config} =

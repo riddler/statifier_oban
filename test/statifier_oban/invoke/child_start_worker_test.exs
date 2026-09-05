@@ -17,8 +17,8 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
     @behaviour StatifierOban.Invoke.ChildStarter
 
     @impl StatifierOban.Invoke.ChildStarter
-    def start_child(parent_run_id, invoke, index, count) do
-      send(:child_start_listener, {:started, parent_run_id, invoke, index, count})
+    def start_child(parent_run_id, invoke, index, count, opts) do
+      send(:child_start_listener, {:started, parent_run_id, invoke, index, count, opts})
       :ok
     end
   end
@@ -28,7 +28,8 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
     @behaviour StatifierOban.Invoke.ChildStarter
 
     @impl StatifierOban.Invoke.ChildStarter
-    def start_child(_parent_run_id, _invoke, _index, _count), do: {:error, :run_store_down}
+    def start_child(_parent_run_id, _invoke, _index, _count, _opts),
+      do: {:error, :run_store_down}
   end
 
   setup do
@@ -55,7 +56,7 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
 
     assert %{success: 1, failure: 0, cancelled: 0} = drain()
 
-    assert_received {:started, "sess_cs_ok", %Invoke{} = invoke, 1, 4}
+    assert_received {:started, "sess_cs_ok", %Invoke{} = invoke, 1, 4, [policy: :all]}
     assert invoke.invoke_id == "inv_cs_ok"
     assert invoke.macrostep == 1
     assert invoke.params == %{"item" => "b"}
@@ -64,7 +65,7 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
   # A run store that is down is an environment fact, and the seam is
   # idempotent on the index by contract, so the job retries.
   #
-  # sabotage: `start/5`'s `{:error, reason}` arm returned `:ok` - went
+  # sabotage: `start/6`'s `{:error, reason}` arm returned `:ok` - went
   # red (the job succeeded instead of failing), reverted.
   test "a seam error makes the start job retry" do
     insert!("sess_cs_fail", "inv_cs_fail", 0, 1, FailingStarter)
@@ -132,6 +133,54 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
     assert %{success: 0, failure: 0, cancelled: 1} = drain()
   end
 
+  # -- the seam's option list (RQ-031-4, sob-64p) --------------------------
+
+  # The row's stored policy, not a default, is what the seam is handed.
+  #
+  # sabotage: `perform/1` passed a literal `[policy: :all]` to `start/6`
+  # instead of the decoded `opts` - went red (the recorded call came back
+  # `[policy: :all]` for a row storing `first_error`), reverted.
+  test "the seam is handed the policy the fan-out stored on the row" do
+    args = args_for("sess_cs_pol", "inv_cs_pol", 0, 1, :first_error)
+
+    {:ok, _job} =
+      Oban.insert(
+        @oban_name,
+        ChildStartWorker.new(args,
+          queue: @queue,
+          meta: %{"child_starter" => Atom.to_string(OkStarter)}
+        )
+      )
+
+    assert %{success: 1, failure: 0, cancelled: 0} = drain()
+
+    assert_received {:started, "sess_cs_pol", %Invoke{}, 0, 1, [policy: :first_error]}
+  end
+
+  # No number of retries makes an unreadable policy readable, and
+  # starting the child under a guessed aggregation is the thing the
+  # widened seam exists to prevent.
+  #
+  # sabotage: `seam_opts/1`'s error arm returned `{:error, reason}` -
+  # went red (the job failed and would retry forever instead of
+  # cancelling), reverted.
+  test "a row whose policy is neither word cancels rather than retrying" do
+    args = Map.put(args_for("sess_cs_badpol", "inv_cs_badpol", 0, 1), "policy", "any_error")
+
+    {:ok, _job} =
+      Oban.insert(
+        @oban_name,
+        ChildStartWorker.new(args,
+          queue: @queue,
+          meta: %{"child_starter" => Atom.to_string(OkStarter)}
+        )
+      )
+
+    assert %{success: 0, failure: 0, cancelled: 1} = drain()
+
+    refute_received {:started, _scope, _invoke, _index, _count, _opts}
+  end
+
   # -- the four-component key (ADR-0007 decision 4) ------------------------
 
   # sabotage: the unique `keys` list dropped `:index` - went red (the
@@ -145,7 +194,7 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
     refute second.conflict?
   end
 
-  # sabotage: `for_child_start/3` was made to stamp a unique index per
+  # sabotage: `for_child_start/4` was made to stamp a unique index per
   # call - went red (the replay inserted a second job), reverted.
   test "the same index inserted twice is one job" do
     first = insert!("sess_cs_dedup", "inv_cs_dedup", 0, 2, OkStarter)
@@ -170,7 +219,7 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
     job
   end
 
-  defp args_for(scope, invoke_id, index, count) do
+  defp args_for(scope, invoke_id, index, count, policy \\ :all) do
     {:ok, args} =
       JobArgs.from_invoke(scope, TestInvokeHandler, %Invoke{
         invoke_id: invoke_id,
@@ -187,7 +236,7 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
         caller_context: nil
       })
 
-    JobArgs.for_child_start(args, index, count)
+    JobArgs.for_child_start(args, index, count, policy)
   end
 
   defp insert_with_starter_name!(scope, invoke_id, name) do

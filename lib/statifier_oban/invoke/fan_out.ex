@@ -51,6 +51,7 @@ defmodule StatifierOban.Invoke.FanOut do
   | `:cap_exceeded` | the list is longer than the config's `:max_fan_out`; `detail` also carries `count` and `cap` |
   | `:invalid_items` | the handler returned something that is not a list |
   | `:empty_items` | the list is empty (see below) |
+  | `:invalid_policy` | the invocation's `on` parameter is neither `"all"` nor `"first_error"` (see below) |
 
   A refusal is delivered on the invocation's ordinary error route,
   `error.communication.invoke.<invoke_id>`, exactly as ADR-0007 decision
@@ -58,6 +59,26 @@ defmodule StatifierOban.Invoke.FanOut do
   class `"fan_out_refused"` that ADR-0005's 2026-09-05 Note adds to that
   record's decision 3. It is not a compile finding and not a validation
   finding: the compiler never sees N.
+
+  ## The aggregation policy comes off the invocation
+
+  `sb-ADR-0009` puts a `core.map`'s `on` in the compiled `<param>` list
+  beside `items`, so the policy arrives on the effect's `params` as the
+  word `"all"` or `"first_error"`. It is read here, once per fan-out,
+  and then rides on **every** start job to
+  `c:StatifierOban.Invoke.ChildStarter.start_child/5`, because the
+  settlement side records it on each child's own linkage at creation
+  rather than on the parent's.
+
+  No `on`, and no `params` map to carry one, is `:all` - the aggregation
+  a `core.map` that says nothing about failure means. An `on` that is
+  present but is neither word is **refused**, not defaulted: `:all` and
+  `:first_error` differ in whether a failing child cancels its siblings,
+  so quietly reading an unrecognised word as `:all` would run a chart
+  that asked for one under the other. The policy is not read off the
+  handler's `opts`: it is the chart's word, not the handler's, and a
+  handler that could override it would be deciding an aggregation the
+  document already decided.
 
   **The empty list is refused rather than answered**, and that is a
   deliberately conservative reading of a gap. A fan-out of zero children
@@ -71,8 +92,9 @@ defmodule StatifierOban.Invoke.FanOut do
 
   import Ecto.Query, only: [where: 3]
 
+  alias Statifier.Effect.Invoke
   alias StatifierOban.{CancellableStates, Config}
-  alias StatifierOban.Invoke.{ChildStartWorker, JobArgs}
+  alias StatifierOban.Invoke.{ChildStarter, ChildStartWorker, JobArgs}
 
   @typedoc """
   Why a fan-out was refused, as it reaches the chart in the failure
@@ -84,7 +106,7 @@ defmodule StatifierOban.Invoke.FanOut do
   (ADR-0006 decision 9).
   """
   @type refusal :: %{
-          required(:reason) => :cap_exceeded | :invalid_items | :empty_items,
+          required(:reason) => :cap_exceeded | :invalid_items | :empty_items | :invalid_policy,
           optional(:count) => non_neg_integer(),
           optional(:cap) => pos_integer()
         }
@@ -100,8 +122,8 @@ defmodule StatifierOban.Invoke.FanOut do
 
   `args` is the fan-out job's own args map - the invocation on the wire,
   opaque payloads and codec tag included - which each start job carries
-  verbatim plus its `"index"` and `"child_count"`
-  (`StatifierOban.Invoke.JobArgs.for_child_start/3`). Reusing the stored
+  verbatim plus its `"index"`, `"child_count"` and `"policy"`
+  (`StatifierOban.Invoke.JobArgs.for_child_start/4`). Reusing the stored
   map rather than re-encoding the effect keeps every child byte-identical
   to the parent job on the fields the codec owns, and runs the host's
   codec once per fan-out rather than once per child.
@@ -112,19 +134,22 @@ defmodule StatifierOban.Invoke.FanOut do
   `{:error, reason}` when scheduling could not happen right now and the
   fan-out job should retry.
 
-  `items` is the handler's evaluated list and `opts` carries the
-  author's `:max_concurrency` hint when there is one. Only the list's
-  length is read here; a non-list, an empty list, and a list longer than
-  the cap are the three refusals above.
+  `invoke` is the decoded effect, read for its `on` parameter and
+  nothing else; `items` is the handler's evaluated list; `opts` carries
+  the author's `:max_concurrency` hint when there is one. Only the
+  list's length is read here; a non-list, an empty list, a list longer
+  than the cap, and an unrecognised `on` are the four refusals above.
   """
-  @spec start(Config.t(), JobArgs.args(), term(), keyword()) ::
+  @spec start(Config.t(), JobArgs.args(), Invoke.t(), term(), keyword()) ::
           :ok | {:refused, refusal()} | {:error, start_error()}
-  def start(%Config{} = config, args, items, opts) when is_map(args) and is_list(opts) do
+  def start(%Config{} = config, args, %Invoke{} = invoke, items, opts)
+      when is_map(args) and is_list(opts) do
     with {:ok, count} <- counted(items, config.max_fan_out),
+         {:ok, policy} <- policy(invoke),
          :ok <- check_max_concurrency(Keyword.get(opts, :max_concurrency)),
          {:ok, queue} <- fetch(config.invoke_queue, :invoke_queue),
          {:ok, starter} <- fetch(config.child_starter, :child_starter) do
-      enqueue_all(config, args, queue, starter, count)
+      enqueue_all(config, args, queue, starter, count, policy)
     end
   end
 
@@ -172,6 +197,25 @@ defmodule StatifierOban.Invoke.FanOut do
 
   defp counted(_items, _cap), do: {:refused, %{reason: :invalid_items}}
 
+  # -- the aggregation policy, off the invocation's own `on` parameter
+
+  # A `core.map`'s params are the resolved `<param>` payload, which is a
+  # map when the block has params at all and `:undefined` when it has
+  # none. Both "no params" and "params without `on`" are the same fact -
+  # the document said nothing about failure - so both are `:all`, and
+  # only a present, unrecognised word is refused.
+  @spec policy(Invoke.t()) :: {:ok, ChildStarter.policy()} | {:refused, refusal()}
+  defp policy(%Invoke{params: params}) when is_map(params) do
+    case Map.get(params, "on") do
+      nil -> {:ok, :all}
+      "all" -> {:ok, :all}
+      "first_error" -> {:ok, :first_error}
+      _other -> {:refused, %{reason: :invalid_policy}}
+    end
+  end
+
+  defp policy(%Invoke{}), do: {:ok, :all}
+
   # The hint is validated and then deliberately unused: all N starts are
   # enqueued up front and the queue's own limit is the bound, in both
   # directions (ADR-0007 decision 1 and its dated Note). Validating a
@@ -194,15 +238,21 @@ defmodule StatifierOban.Invoke.FanOut do
   # `Oban.insert_all/3`, which does not apply Oban's unique option and
   # would trade exactly that property for atomicity - the context of
   # ADR-0007 says why at length.
-  @spec enqueue_all(Config.t(), JobArgs.args(), atom() | String.t(), module(), pos_integer()) ::
-          :ok | {:error, start_error()}
-  defp enqueue_all(config, args, queue, starter, count) do
+  @spec enqueue_all(
+          Config.t(),
+          JobArgs.args(),
+          atom() | String.t(),
+          module(),
+          pos_integer(),
+          ChildStarter.policy()
+        ) :: :ok | {:error, start_error()}
+  defp enqueue_all(config, args, queue, starter, count, policy) do
     meta = %{"child_starter" => Atom.to_string(starter)}
 
     Enum.reduce_while(0..(count - 1), :ok, fn index, :ok ->
       changeset =
         args
-        |> JobArgs.for_child_start(index, count)
+        |> JobArgs.for_child_start(index, count, policy)
         |> ChildStartWorker.new(queue: queue, meta: meta)
 
       case Oban.insert(config.oban, changeset) do

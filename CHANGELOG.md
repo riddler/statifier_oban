@@ -18,6 +18,7 @@ change warrants an entry at all.
 - `StatifierOban.Invoke.ChildStarter` is the seam a fan-out's child runs are created through, named by the new `:child_starter` config option.
 - `:max_fan_out` caps a fan-out's width (default `1_000`); a wider one starts no children and fails the invocation on `error.communication.invoke.<invoke_id>` with the count and the cap.
 - `StatifierOban.Invoke.FanOut.cancel_unstarted/3` cancels the start jobs of an invocation whose children have not been created yet.
+- A fan-out's aggregation policy reaches the starter seam: `StatifierOban.Invoke.ChildStarter.start_child/5` takes an option list carrying `policy: :all | :first_error`, read off the `core.map` invocation's `on` parameter (absent means `:all`; an unrecognised word refuses the fan-out), so a `first_error` fan-out is expressible through the seam. The callback's arity changed within this still-unreleased version - no published release carried the four-value shape.
 
 ## [0.6.1] 2026-09-03
 

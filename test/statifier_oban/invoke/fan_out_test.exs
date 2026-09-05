@@ -19,8 +19,12 @@ defmodule StatifierOban.Invoke.FanOutTest do
     @behaviour StatifierOban.Invoke.ChildStarter
 
     @impl StatifierOban.Invoke.ChildStarter
-    def start_child(parent_run_id, invoke, index, count) do
-      send(:invoke_fan_out_listener, {:started, parent_run_id, invoke.invoke_id, index, count})
+    def start_child(parent_run_id, invoke, index, count, opts) do
+      send(
+        :invoke_fan_out_listener,
+        {:started, parent_run_id, invoke.invoke_id, index, count, opts}
+      )
+
       :ok
     end
   end
@@ -170,8 +174,8 @@ defmodule StatifierOban.Invoke.FanOutTest do
   test "re-running the fan-out enqueues no second copy of an index" do
     args = args_for("sess_fo_replay", "inv_replay", FanOutHandler)
 
-    assert :ok = FanOut.start(config(), args, ["a", "b", "c"], [])
-    assert :ok = FanOut.start(config(), args, ["a", "b", "c"], [])
+    assert :ok = FanOut.start(config(), args, invoke_for("inv_replay"), ["a", "b", "c"], [])
+    assert :ok = FanOut.start(config(), args, invoke_for("inv_replay"), ["a", "b", "c"], [])
 
     assert [0, 1, 2] == start_indices("sess_fo_replay", "inv_replay")
   end
@@ -229,7 +233,13 @@ defmodule StatifierOban.Invoke.FanOutTest do
   # reverted.
   test "a non-list fan-out is refused without putting the value on the error route" do
     assert {:refused, refusal} =
-             FanOut.start(config(), args_for("s", "i", FanOutHandler), "not_a_list", [])
+             FanOut.start(
+               config(),
+               args_for("s", "i", FanOutHandler),
+               invoke_for("i"),
+               "not_a_list",
+               []
+             )
 
     assert refusal == %{reason: :invalid_items}
   end
@@ -243,7 +253,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
   # exist instead of refusing), reverted.
   test "an empty fan-out is refused rather than left unanswerable" do
     assert {:refused, %{reason: :empty_items}} =
-             FanOut.start(config(), args_for("s", "i", FanOutHandler), [], [])
+             FanOut.start(config(), args_for("s", "i", FanOutHandler), invoke_for("i"), [], [])
   end
 
   # -- max_concurrency: clamped, never honoured below the queue (R31-11) ---
@@ -287,7 +297,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
   # out), reverted.
   test "a malformed max_concurrency hint is a scheduling error, not a silent default" do
     assert {:error, {:invalid_option, :max_concurrency, "four"}} =
-             FanOut.start(config(), args_for("s", "i", FanOutHandler), ["a"],
+             FanOut.start(config(), args_for("s", "i", FanOutHandler), invoke_for("i"), ["a"],
                max_concurrency: "four"
              )
   end
@@ -372,7 +382,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
 
   # -- the seam is reached with the index and the count --------------------
 
-  # sabotage: `ChildStartWorker.start/5` passed `count` where `index`
+  # sabotage: `ChildStartWorker.start/6` passed `count` where `index`
   # goes - went red (the recorded indices came back [3, 3, 3]), reverted.
   test "each start job calls the seam with the parent run, the effect, its index and the count" do
     insert_fan_out!("sess_fo_seam", "inv_seam", ["a", "b", "c"])
@@ -380,18 +390,84 @@ defmodule StatifierOban.Invoke.FanOutTest do
     assert %{success: 3} = drain()
 
     for index <- 0..2 do
-      assert_received {:started, "sess_fo_seam", "inv_seam", ^index, 3}
+      assert_received {:started, "sess_fo_seam", "inv_seam", ^index, 3, _opts}
     end
+  end
+
+  # -- the aggregation policy reaches the seam (RQ-031-4, sob-64p) --------
+
+  # An invocation that says nothing about failure is `:all`, and that is
+  # what every one of its children is started with.
+  #
+  # sabotage: `policy/1`'s `nil` clause returned
+  # `{:ok, :first_error}` - went red (all three children were started
+  # under the wrong aggregation), reverted.
+  test "an invocation with no on parameter starts every child with policy: :all" do
+    insert_fan_out!("sess_fo_pol_all", "inv_pol_all", ["a", "b", "c"])
+    assert %{success: 1} = drain()
+    assert %{success: 3} = drain()
+
+    for index <- 0..2 do
+      assert_received {:started, "sess_fo_pol_all", "inv_pol_all", ^index, 3, [policy: :all]}
+    end
+  end
+
+  # The case a four-value seam could not express at all: `first_error`
+  # has to reach the starter at EVERY index, because the settlement side
+  # records it on each child's own linkage.
+  #
+  # sabotage: `enqueue_all/6` passed a literal `:all` to
+  # `for_child_start/4` instead of the derived policy - went red (every
+  # child was started `[policy: :all]`), reverted.
+  test "an on of first_error starts every child with policy: :first_error" do
+    insert_fan_out!("sess_fo_pol_fe", "inv_pol_fe", ["a", "b", "c"], on: "first_error")
+    assert %{success: 1} = drain()
+    assert %{success: 3} = drain()
+
+    for index <- 0..2 do
+      assert_received {:started, "sess_fo_pol_fe", "inv_pol_fe", ^index, 3,
+                       [policy: :first_error]}
+    end
+  end
+
+  # `"all"` written out explicitly is the same fan-out as no `on` at all.
+  #
+  # sabotage: `policy/1`'s `"all"` clause was removed, so the word fell
+  # to the catch-all - went red (the fan-out was refused
+  # `:invalid_policy` and started nothing), reverted.
+  test "an on of all is the same as no on at all" do
+    insert_fan_out!("sess_fo_pol_word", "inv_pol_word", ["a"], on: "all")
+    assert %{success: 1} = drain()
+    assert %{success: 1} = drain()
+
+    assert_received {:started, "sess_fo_pol_word", "inv_pol_word", 0, 1, [policy: :all]}
+  end
+
+  # Reading an unrecognised word as `:all` would run a chart that asked
+  # for one aggregation under the other, so it is refused before the
+  # first child start, like the cap.
+  #
+  # sabotage: `policy/1`'s catch-all clause returned `{:ok, :all}` - went
+  # red (a start job went out and no failure was delivered), reverted.
+  test "an on that is neither word refuses the fan-out and starts nothing" do
+    insert_fan_out!("sess_fo_pol_bad", "inv_pol_bad", ["a", "b"], on: "any_error")
+
+    assert %{success: 0, cancelled: 1, failure: 0} = drain()
+
+    assert [] == start_jobs("sess_fo_pol_bad", "inv_pol_bad")
+
+    assert_received {:failed, "sess_fo_pol_bad", "inv_pol_bad", failure}
+    assert failure[:reason] == "fan_out_refused"
+    assert failure[:detail] =~ "invalid_policy"
   end
 
   # -- helpers -------------------------------------------------------------
 
   defp insert_fan_out!(scope, invoke_id, items, opts \\ [], handler \\ FanOutHandler) do
     params =
-      case Keyword.get(opts, :max_concurrency) do
-        nil -> %{"items" => items}
-        hint -> %{"items" => items, "max_concurrency" => hint}
-      end
+      %{"items" => items}
+      |> maybe_put("max_concurrency", Keyword.get(opts, :max_concurrency))
+      |> maybe_put("on", Keyword.get(opts, :on))
 
     {:ok, job} =
       Oban.insert(
@@ -425,6 +501,28 @@ defmodule StatifierOban.Invoke.FanOutTest do
     args
   end
 
+  defp maybe_put(params, _key, nil), do: params
+  defp maybe_put(params, key, value), do: Map.put(params, key, value)
+
+  # The effect `FanOut.start/5` reads the `on` parameter off, for the
+  # tests that call it directly rather than through a drained job.
+  defp invoke_for(invoke_id, params \\ %{}) do
+    %Invoke{
+      invoke_id: invoke_id,
+      type: "myapp:signup",
+      src: "per_item_chart",
+      params: params,
+      content: nil,
+      autoforward: false,
+      state_index: 0,
+      invoke_index: 0,
+      macrostep: 1,
+      microstep: 1,
+      round: 1,
+      caller_context: nil
+    }
+  end
+
   defp drain, do: Oban.drain_queue(@oban_name, queue: @queue)
 
   defp start_jobs(scope, invoke_id) do
@@ -442,7 +540,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
   end
 
   defp stored_start_job_id(scope, invoke_id) do
-    args = JobArgs.for_child_start(args_for(scope, invoke_id, FanOutHandler), 0, 1)
+    args = JobArgs.for_child_start(args_for(scope, invoke_id, FanOutHandler), 0, 1, :all)
 
     {:ok, job} =
       Oban.insert(

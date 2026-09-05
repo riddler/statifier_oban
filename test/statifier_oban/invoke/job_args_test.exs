@@ -175,16 +175,19 @@ defmodule StatifierOban.Invoke.JobArgsTest do
 
   # -- the fan-out child position (ADR-0007 decision 4, sob-q3y) ----------
 
-  # sabotage: `for_child_start/3` wrote `"child_index"` instead of
+  # sabotage: `for_child_start/4` wrote `"child_index"` instead of
   # `"index"` - went red (the key Oban's uniqueness reads was absent and
-  # `child_position/1` reported it missing), reverted.
-  test "for_child_start/3 puts the index and the count at the top level" do
+  # `child_position/1` reported it missing); separately it wrote
+  # `Atom.to_string(:all)` for every policy - went red on the policy
+  # assertion. Both reverted.
+  test "for_child_start/4 puts the index, the count and the policy at the top level" do
     args = from_invoke!("sess_fcs", StatifierOban.TestInvokeHandler, @invoke)
 
-    widened = JobArgs.for_child_start(args, 2, 5)
+    widened = JobArgs.for_child_start(args, 2, 5, :first_error)
 
     assert widened["index"] == 2
     assert widened["child_count"] == 5
+    assert widened["policy"] == "first_error"
     assert widened["scope"] == "sess_fcs"
     assert widened["invoke_id"] == @invoke.invoke_id
   end
@@ -192,15 +195,70 @@ defmodule StatifierOban.Invoke.JobArgsTest do
   # sabotage: `child_position/1` returned the count and the index the
   # other way round - went red (the round trip came back {5, 2}),
   # reverted.
-  test "child_position/1 reads back what for_child_start/3 wrote, over JSON" do
+  test "child_position/1 reads back what for_child_start/4 wrote, over JSON" do
     args =
       "sess_fcs_rt"
       |> from_invoke!(StatifierOban.TestInvokeHandler, @invoke)
-      |> JobArgs.for_child_start(2, 5)
+      |> JobArgs.for_child_start(2, 5, :all)
       |> JSON.encode!()
       |> JSON.decode!()
 
     assert {:ok, 2, 5} = JobArgs.child_position(args)
+  end
+
+  # The policy is what a `first_error` fan-out cannot be expressed
+  # without: it is written as its wire word and read back as the seam's
+  # keyword list, over JSON, both ways round.
+  #
+  # sabotage: `for_child_start/4` wrote `Atom.to_string(:all)` for every
+  # policy - went red (the `first_error` round trip came back
+  # `[policy: :all]`), reverted.
+  test "child_opts/1 reads both policies back over JSON" do
+    for {policy, word} <- [{:all, "all"}, {:first_error, "first_error"}] do
+      args =
+        "sess_fcs_policy"
+        |> from_invoke!(StatifierOban.TestInvokeHandler, @invoke)
+        |> JobArgs.for_child_start(0, 1, policy)
+        |> JSON.encode!()
+        |> JSON.decode!()
+
+      assert args["policy"] == word
+      assert {:ok, [policy: ^policy]} = JobArgs.child_opts(args)
+    end
+  end
+
+  # `:all` is what an invocation naming no `on` asked for on the way in,
+  # so it is what an absent field means on the way out - a start job
+  # stored without the key starts the child it was always going to.
+  #
+  # sabotage: `child_opts/1`'s `nil` clause returned
+  # `{:error, {:missing_field, "policy"}}` - went red (the row read as an
+  # error rather than as `:all`), reverted.
+  test "child_opts/1 reads a row carrying no policy as :all" do
+    args =
+      "sess_fcs_nopolicy"
+      |> from_invoke!(StatifierOban.TestInvokeHandler, @invoke)
+      |> JobArgs.for_child_start(0, 1, :first_error)
+      |> Map.delete("policy")
+
+    assert {:ok, [policy: :all]} = JobArgs.child_opts(args)
+  end
+
+  # A word that is neither policy is a fact about the row, not a reason
+  # to guess: guessing `:all` would run a `first_error` fan-out under the
+  # other aggregation.
+  #
+  # sabotage: `child_opts/1`'s catch-all clause returned
+  # `{:ok, [policy: :all]}` - went red (the malformed row decoded
+  # cleanly), reverted.
+  test "child_opts/1 rejects a policy that is neither word" do
+    args =
+      "sess_fcs_badpolicy"
+      |> from_invoke!(StatifierOban.TestInvokeHandler, @invoke)
+      |> JobArgs.for_child_start(0, 1, :all)
+      |> Map.put("policy", "any")
+
+    assert {:error, {:invalid_field, "policy", "any"}} = JobArgs.child_opts(args)
   end
 
   # sabotage: `child_position/1`'s `index < count` test was dropped -
