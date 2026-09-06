@@ -8,7 +8,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
   alias Statifier.Effect.Invoke
   alias StatifierOban.Config
   alias StatifierOban.Invoke.{ChildStartWorker, Delivery, FanOut, JobArgs, Worker}
-  alias StatifierOban.TestRepo
+  alias StatifierOban.{Telemetry, TestRepo}
 
   @oban_name StatifierOban.Invoke.FanOutTestOban
   @queue "invoke_fan_out_test"
@@ -75,6 +75,28 @@ defmodule StatifierOban.Invoke.FanOutTest do
 
     @impl StatifierOban.Invoke.Handler
     def config, do: FanOutTest.config(child_starter: nil)
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{params: params}), do: {:fan_out, Map.fetch!(params, "items")}
+  end
+
+  defmodule FailingStarter do
+    @moduledoc false
+    @behaviour StatifierOban.Invoke.ChildStarter
+
+    @impl StatifierOban.Invoke.ChildStarter
+    def start_child(_parent_run_id, _invoke, _index, _count, _opts),
+      do: {:error, :run_store_down}
+  end
+
+  defmodule FailingStarterHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    alias StatifierOban.Invoke.FanOutTest
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: FanOutTest.config(child_starter: FanOutTest.FailingStarter)
 
     @impl StatifierOban.Invoke.Handler
     def run(%Invoke{params: params}), do: {:fan_out, Map.fetch!(params, "items")}
@@ -174,8 +196,11 @@ defmodule StatifierOban.Invoke.FanOutTest do
   test "re-running the fan-out enqueues no second copy of an index" do
     args = args_for("sess_fo_replay", "inv_replay", FanOutHandler)
 
-    assert :ok = FanOut.start(config(), args, invoke_for("inv_replay"), ["a", "b", "c"], [])
-    assert :ok = FanOut.start(config(), args, invoke_for("inv_replay"), ["a", "b", "c"], [])
+    assert {:ok, %{count: 3, policy: :all, queue: @queue}} =
+             FanOut.start(config(), args, invoke_for("inv_replay"), ["a", "b", "c"], [])
+
+    assert {:ok, %{count: 3, policy: :all, queue: @queue}} =
+             FanOut.start(config(), args, invoke_for("inv_replay"), ["a", "b", "c"], [])
 
     assert [0, 1, 2] == start_indices("sess_fo_replay", "inv_replay")
   end
@@ -486,7 +511,194 @@ defmodule StatifierOban.Invoke.FanOutTest do
     assert failure[:detail] =~ "invalid_policy"
   end
 
+  # -- the fan-out seam's telemetry (ADR-0006's 2026-09-06 amendment) -----
+
+  # sabotage: `Worker`'s fan-out `{:ok, summary}` arm dropped the
+  # `Telemetry.invoke_fan_out/7` call - went red here and, as a side
+  # effect, on the policy test below, both of which wait on a `:fan_out`
+  # event that never arrived; reverted.
+  test "a dispatched fan-out emits :fan_out with the count, policy and queue it used" do
+    attach!()
+
+    job =
+      insert_fan_out!("sess_fo_tel", "inv_tel", ["a", "b", "c"],
+        on: "first_error",
+        caller_context: %{"traceparent" => "00-fo"}
+      )
+
+    assert %{success: 1} = drain()
+
+    assert_received {:event, [:statifier_oban, :invoke, :fan_out], measurements, metadata}
+    assert %{system_time: system_time, count: 3} = measurements
+    assert is_integer(system_time)
+
+    assert metadata == %{
+             scope: "sess_fo_tel",
+             invoke_id: "inv_tel",
+             handler: FanOutHandler,
+             policy: :first_error,
+             queue: @queue,
+             job_id: job.id,
+             caller_context: %{"traceparent" => "00-fo"}
+           }
+  end
+
+  # `policy` is what the children were actually enqueued under, so an
+  # invocation naming no `on` reports the `:all` its start jobs carry
+  # rather than a second reading of the parameter.
+  #
+  # sabotage: `enqueue_all/6`'s summary was built with a literal
+  # `policy: :first_error` - went red here (`:all` expected, `:first_error`
+  # arrived) and on the decision-4 replay test, which reads the same field
+  # off `start/5`, while the `first_error` test above stayed green - which
+  # is the pair the mutation needs; reverted.
+  test "an invocation naming no aggregation policy reports the :all its children carry" do
+    attach!()
+
+    insert_fan_out!("sess_fo_tel_all", "inv_tel_all", ["a"])
+
+    assert %{success: 1} = drain()
+
+    assert_received {:event, [:statifier_oban, :invoke, :fan_out], _m, %{policy: :all}}
+    assert [%Oban.Job{args: %{"policy" => "all"}}] = start_jobs("sess_fo_tel_all", "inv_tel_all")
+  end
+
+  # `sb-ADR-0009` decision 8's empty fan-out is answered, not dispatched:
+  # it stores no start job, so there is no dispatch to report and the
+  # ordinary `:delivered` event is the one that fires.
+  #
+  # sabotage: `Worker.fan_out/7`'s `{:empty, collected}` arm was made to
+  # emit `:fan_out` with `count: 0` before answering - went red (an event
+  # arrived where none belongs), reverted.
+  test "an empty fan-out emits no :fan_out event: nothing was dispatched" do
+    attach!()
+
+    insert_fan_out!("sess_fo_tel_empty", "inv_tel_empty", [])
+
+    assert %{success: 1} = drain()
+
+    refute_received {:event, [:statifier_oban, :invoke, :fan_out], _m, _md}
+  end
+
+  # sabotage: `ChildStartWorker.perform/1`'s `with` ended at
+  # `start(...)` again, dropping the emission - went red (no
+  # `:child_started` event arrived), reverted.
+  test "each child start emits :child_started with its own index, count and job" do
+    attach!()
+
+    insert_fan_out!("sess_fo_tel_child", "inv_tel_child", ["a", "b"],
+      caller_context: %{"traceparent" => "00-child"}
+    )
+
+    assert %{success: 1} = drain()
+    # The second drain runs the start jobs the first one enqueued.
+    assert %{success: 2} = drain()
+
+    assert [first, second] = start_jobs("sess_fo_tel_child", "inv_tel_child")
+
+    assert_received {:event, [:statifier_oban, :invoke, :child_started], zeroth_m, zeroth}
+    assert %{system_time: system_time, attempt: 1} = zeroth_m
+    assert is_integer(system_time)
+
+    assert zeroth == %{
+             scope: "sess_fo_tel_child",
+             invoke_id: "inv_tel_child",
+             index: 0,
+             count: 2,
+             job_id: first.id,
+             caller_context: %{"traceparent" => "00-child"}
+           }
+
+    assert_received {:event, [:statifier_oban, :invoke, :child_started], %{attempt: 1}, firstth}
+
+    assert firstth == %{
+             scope: "sess_fo_tel_child",
+             invoke_id: "inv_tel_child",
+             index: 1,
+             count: 2,
+             job_id: second.id,
+             caller_context: %{"traceparent" => "00-child"}
+           }
+  end
+
+  # A start that never reached the seam is not a start: the retry is
+  # Oban's exception event and this contract stays silent.
+  #
+  # sabotage: `perform/1`'s `with` emitted before `start/6` rather than
+  # after it - went red (a `:child_started` event arrived for a child the
+  # seam refused to create), reverted.
+  test "a start job whose seam errors emits no :child_started" do
+    attach!()
+
+    insert_fan_out!("sess_fo_tel_fail", "inv_tel_fail", ["a"], [], FailingStarterHandler)
+
+    assert %{success: 1} = drain()
+    assert %{success: 0, failure: 1} = drain()
+
+    refute_received {:event, [:statifier_oban, :invoke, :child_started], _m, _md}
+  end
+
+  # The acceptance criterion for this seam, in the form this package can
+  # check: the number on the event is the number of start jobs the sweep
+  # actually moved to `cancelled`. The other half of `sb-ADR-0009`
+  # decision 6's cancel - the siblings that already have a child run - is
+  # the settlement side's, and adding the two is what matches the run's
+  # cancelled entries.
+  #
+  # sabotage: `cancel_unstarted/3` emitted a hardcoded `0` rather than the
+  # sweep's own count - went red (three rows read `cancelled` while the
+  # event said `0`), reverted.
+  test "the unstarted cancel emits the count of the rows it actually cancelled" do
+    attach!()
+
+    insert_fan_out!("sess_fo_tel_cancel", "inv_tel_started", ["a", "b", "c"])
+    assert %{success: 1} = drain()
+    assert %{success: 3} = drain()
+
+    insert_fan_out!("sess_fo_tel_cancel", "inv_tel_unstarted", ["a", "b", "c"])
+    assert %{success: 1} = drain()
+
+    assert {:ok, 3} = FanOut.cancel_unstarted(config(), "sess_fo_tel_cancel", "inv_tel_unstarted")
+
+    assert_received {:event, [:statifier_oban, :invoke, :unstarted_cancelled], measurements,
+                     metadata}
+
+    assert %{system_time: system_time, count: 3} = measurements
+    assert is_integer(system_time)
+    assert metadata == %{scope: "sess_fo_tel_cancel", invoke_id: "inv_tel_unstarted"}
+
+    cancelled =
+      Enum.count(states("sess_fo_tel_cancel", "inv_tel_unstarted"), &(&1 == "cancelled"))
+
+    assert cancelled == measurements.count
+
+    # An invocation whose starts all ran cancels nothing, and `0` is data.
+    assert {:ok, 0} = FanOut.cancel_unstarted(config(), "sess_fo_tel_cancel", "inv_tel_started")
+
+    assert_received {:event, [:statifier_oban, :invoke, :unstarted_cancelled], %{count: 0},
+                     %{invoke_id: "inv_tel_started"}}
+  end
+
   # -- helpers -------------------------------------------------------------
+
+  @fan_out_events [
+    [:statifier_oban, :invoke, :fan_out],
+    [:statifier_oban, :invoke, :child_started],
+    [:statifier_oban, :invoke, :unstarted_cancelled]
+  ]
+
+  defp attach! do
+    handler_id = "fan-out-telemetry-#{System.unique_integer([:positive])}"
+    :telemetry.attach_many(handler_id, @fan_out_events, &__MODULE__.relay/4, self())
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
+  @doc false
+  @spec relay(Telemetry.event_name(), map(), map(), pid()) :: :ok
+  def relay(event, measurements, metadata, pid) do
+    send(pid, {:event, event, measurements, metadata})
+    :ok
+  end
 
   defp insert_fan_out!(scope, invoke_id, items, opts \\ [], handler \\ FanOutHandler) do
     params =
@@ -497,7 +709,8 @@ defmodule StatifierOban.Invoke.FanOutTest do
     {:ok, job} =
       Oban.insert(
         @oban_name,
-        Worker.new(args_for(scope, invoke_id, handler, params),
+        Worker.new(
+          args_for(scope, invoke_id, handler, params, Keyword.get(opts, :caller_context)),
           queue: @queue,
           meta: %{"delivery" => Atom.to_string(RecordingDelivery)}
         )
@@ -506,7 +719,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
     job
   end
 
-  defp args_for(scope, invoke_id, handler, params \\ %{}) do
+  defp args_for(scope, invoke_id, handler, params \\ %{}, caller_context \\ nil) do
     {:ok, args} =
       JobArgs.from_invoke(scope, handler, %Invoke{
         invoke_id: invoke_id,
@@ -520,7 +733,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
         macrostep: 1,
         microstep: 1,
         round: 1,
-        caller_context: nil
+        caller_context: caller_context
       })
 
     args

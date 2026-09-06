@@ -113,7 +113,7 @@ defmodule StatifierOban.Invoke.FanOut do
   import Ecto.Query, only: [where: 3]
 
   alias Statifier.Effect.Invoke
-  alias StatifierOban.{CancellableStates, Config}
+  alias StatifierOban.{CancellableStates, Config, Telemetry}
   alias StatifierOban.Invoke.{ChildStarter, ChildStartWorker, JobArgs}
 
   @typedoc """
@@ -129,6 +129,22 @@ defmodule StatifierOban.Invoke.FanOut do
           required(:reason) => :cap_exceeded | :invalid_items | :invalid_policy,
           optional(:count) => non_neg_integer(),
           optional(:cap) => pos_integer()
+        }
+
+  @typedoc """
+  What `start/5` reports about the starts it stored: the fan-out's width,
+  the aggregation policy the children were enqueued under, and the queue
+  they went to.
+
+  It exists because `[:statifier_oban, :invoke, :fan_out]` is emitted by
+  the caller, which holds the job the other half of that event needs, and
+  re-deriving these three there would mean reading the invocation's `on`
+  parameter a second time (ADR-0006's 2026-09-06 amendment).
+  """
+  @type summary :: %{
+          count: non_neg_integer(),
+          policy: ChildStarter.policy(),
+          queue: atom() | String.t()
         }
 
   @typedoc "Why a fan-out could not be scheduled right now."
@@ -148,8 +164,9 @@ defmodule StatifierOban.Invoke.FanOut do
   to the parent job on the fields the codec owns, and runs the host's
   codec once per fan-out rather than once per child.
 
-  Returns `:ok` when every start job is enqueued (or conflicts with one
-  already stored, which is the same thing - decision 4), `{:empty,
+  Returns `{:ok, summary}` when every start job is enqueued (or conflicts
+  with one already stored, which is the same thing - decision 4) - see
+  `t:summary/0` for what the caller reads off it - `{:empty,
   collected}` when `items` is `[]` and the fan-out is therefore over
   before it starts - `collected` is the empty accumulated list the
   caller answers the invocation with - `{:refused, refusal}` when the
@@ -165,7 +182,7 @@ defmodule StatifierOban.Invoke.FanOut do
   list is the success over nothing.
   """
   @spec start(Config.t(), JobArgs.args(), Invoke.t(), term(), keyword()) ::
-          :ok | {:empty, []} | {:refused, refusal()} | {:error, start_error()}
+          {:ok, summary()} | {:empty, []} | {:refused, refusal()} | {:error, start_error()}
   def start(%Config{} = config, args, %Invoke{} = invoke, items, opts)
       when is_map(args) and is_list(opts) do
     with {:ok, count} <- counted(items, config.max_fan_out),
@@ -201,11 +218,18 @@ defmodule StatifierOban.Invoke.FanOut do
 
   A cancel matching nothing is a no-op returning `{:ok, 0}`, never an
   error.
+
+  Emits `[:statifier_oban, :invoke, :unstarted_cancelled]` carrying the
+  sweep's own count. That count is only this door's half of decision 6's
+  cancel; the siblings that already have a child run are the live half's,
+  and adding the two halves is what matches the run's cancelled entries.
   """
   @spec cancel_unstarted(Config.t(), String.t(), String.t()) :: {:ok, non_neg_integer()}
   def cancel_unstarted(%Config{} = config, scope, invoke_id)
       when is_binary(scope) and is_binary(invoke_id) do
-    Oban.cancel_all_jobs(config.oban, start_jobs(scope, invoke_id))
+    {:ok, count} = Oban.cancel_all_jobs(config.oban, start_jobs(scope, invoke_id))
+    Telemetry.invoke_unstarted_cancelled(scope, invoke_id, count)
+    {:ok, count}
   end
 
   # -- the cap, checked before anything is enqueued (ADR-0007 decision 8)
@@ -274,13 +298,14 @@ defmodule StatifierOban.Invoke.FanOut do
           module(),
           non_neg_integer(),
           ChildStarter.policy()
-        ) :: :ok | {:empty, []} | {:error, start_error()}
+        ) :: {:ok, summary()} | {:empty, []} | {:error, start_error()}
   defp enqueue_all(_config, _args, _queue, _starter, 0, _policy), do: {:empty, []}
 
   defp enqueue_all(config, args, queue, starter, count, policy) do
     meta = %{"child_starter" => Atom.to_string(starter)}
 
-    Enum.reduce_while(0..(count - 1), :ok, fn index, :ok ->
+    0..(count - 1)
+    |> Enum.reduce_while(:ok, fn index, :ok ->
       changeset =
         args
         |> JobArgs.for_child_start(index, count, policy)
@@ -291,6 +316,10 @@ defmodule StatifierOban.Invoke.FanOut do
         {:error, reason} -> {:halt, {:error, {:enqueue_failed, index, reason}}}
       end
     end)
+    |> case do
+      :ok -> {:ok, %{count: count, policy: policy, queue: queue}}
+      {:error, _reason} = error -> error
+    end
   end
 
   @spec start_jobs(String.t(), String.t()) :: Ecto.Query.t()

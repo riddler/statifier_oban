@@ -40,6 +40,13 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
     `{:undecodable, reason}`, because no number of retries makes a
     corrupt row decodable.
 
+  Each successful start emits
+  `[:statifier_oban, :invoke, :child_started]` (ADR-0006's 2026-09-06
+  amendment) - the per-child seam event the bridge opens a linked root
+  on, carrying the child's `index` and the fan-out's `count`. A start
+  that retries emits nothing until it succeeds; the retry itself is
+  Oban's exception event.
+
   Nothing here delivers into the run. A child start is not an answer:
   the invocation is answered once, by the settlement side, when every
   child has settled. A start that can never succeed exhausts its retries
@@ -58,14 +65,16 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
     ]
 
   alias StatifierOban.Invoke.{ChildStarter, JobArgs}
+  alias StatifierOban.Telemetry
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args, meta: meta}) do
+  def perform(%Oban.Job{args: args, meta: meta} = job) do
     with {:ok, scope, _handler, invoke} <- decode(args),
          {:ok, index, count} <- position(args),
          {:ok, opts} <- seam_opts(args),
-         {:ok, starter} <- starter_module(meta) do
-      start(starter, scope, invoke, index, count, opts)
+         {:ok, starter} <- starter_module(meta),
+         :ok <- start(starter, scope, invoke, index, count, opts) do
+      Telemetry.invoke_child_started(scope, invoke, index, count, job)
     end
   end
 

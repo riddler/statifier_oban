@@ -330,3 +330,28 @@ package ships for this; a host with its own run store wires its own.
 Recorded from the operator's `R31-9` (campaign 031, 2026-09-05), taken from
 the fan-out scale walk, and implemented by `sob-q3y` in
 `StatifierOban.Config` and `StatifierOban.Invoke.FanOut`.
+
+## Note (2026-09-06, sob-28m): decision 9's deferred question is answered
+
+Decision 9 minted no telemetry event name and said the question - "what a
+batched fan-out emits" - belongs to "the campaign that implements it, against
+working code, and inventing the names now would put six strings into
+`docs/telemetry.md` that nothing emits." That campaign has run. Three names
+were needed rather than six, and they are recorded where the event contract
+lives: `ADR-0006`'s 2026-09-06 amendment adds
+`[:statifier_oban, :invoke, :fan_out]`,
+`[:statifier_oban, :invoke, :child_started]` and
+`[:statifier_oban, :invoke, :unstarted_cancelled]`, taking that record's set
+from eleven names to fourteen.
+
+Nothing in this record moves. Decision 9's claim was always that *this* record
+mints no name, which stays true, and the deferral it made is discharged rather
+than reversed. The `sb-ADR-0009` decision 6 asymmetry the second of those
+events exposes is worth naming here, because it is a property of the fan-out
+this record designed and not of the event: `cancel_unstarted/3` reaches only
+the indices whose start job has not run, so its count is half of a
+`first_error` cancel and the settlement side's walk over the created child runs
+is the other half.
+
+Recorded from the operator's `RQ-034-12` (campaign 034, 2026-09-06) and
+implemented by `sob-28m`.
