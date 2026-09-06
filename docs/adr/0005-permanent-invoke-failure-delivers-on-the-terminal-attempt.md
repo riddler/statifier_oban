@@ -275,19 +275,22 @@ this package's shipped refusal as a deferred question, and the operator ruled
 it on 2026-09-06 (campaign 033, `sob-as0` / `sb-xwhj`): the record wins and
 the handler changes.
 
-**`:empty_items` is gone from `:detail`.** The refusals this Note's parent
-describes are now three, not four -
-`%{reason: :cap_exceeded, count: N, cap: C}`, `%{reason: :invalid_items}` and
-`%{reason: :invalid_policy}` - and an empty list reaches none of them.
-`StatifierOban.Invoke.FanOut.start/5` returns `{:empty, []}` for it and
-`StatifierOban.Invoke.Worker` delivers that list on the invocation's ordinary
-`done.invoke` door, the same door and the same shape a `run/1` answer takes.
+**`:empty_items` is gone from `:detail`.** Of the three reasons this Note's
+parent lists, two remain - `%{reason: :cap_exceeded, count: N, cap: C}` and
+`%{reason: :invalid_items}` - and an empty list reaches neither. A third
+reason the parent does not list, `%{reason: :invalid_policy}` for an `on`
+that is neither `"all"` nor `"first_error"`, also reaches the class; it
+arrived with the aggregation policy and this record neither decided it nor
+decides it now. `StatifierOban.Invoke.FanOut.start/5` returns `{:empty, []}`
+for an empty list and `StatifierOban.Invoke.Worker` delivers that list on the
+invocation's ordinary `done.invoke` door, the same door and the same shape a
+`run/1` answer takes.
 
 **Nothing else in this record moves.** The `"fan_out_refused"` class stays,
-with the two refusals it still carries; `:attempts` is still the attempt that
-found the fault; the terminal-attempt rule of decision 1 is untouched; and no
-new event name, function or error family is created. An empty fan-out is a
-success, so it never reaches the failure door at all.
+carrying every refusal that still exists; `:attempts` is still the attempt
+that found the fault; the terminal-attempt rule of decision 1 is untouched;
+and no new event name, function or error family is created. An empty fan-out
+is a success, so it never reaches the failure door at all.
 
 **Why answering it here is not this package minting an answer.** For N
 children the answer is assembled from N answers only the settlement side
