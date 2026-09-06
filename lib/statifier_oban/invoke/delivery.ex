@@ -22,6 +22,30 @@ defmodule StatifierOban.Invoke.Delivery do
   `StatifierOban.Config` carries the implementation (`:invoke_delivery`),
   and the enqueued job carries it to the worker.
 
+  ## What this seam does not resolve
+
+  A delivery module answers for the invocation that just finished, and
+  for nothing else. In particular it never chooses a handler, and there
+  is no per-delivery handler map to configure - not here, not on
+  `StatifierOban.Config`, not in the job args. An `<invoke>`'s handler is
+  chosen by the engine, one drive at a time, out of that run's
+  `:invoke_handlers` registry (st-ADR-0051 decision 4); by the time this
+  package is involved the module has already been chosen, and
+  `StatifierOban.Invoke.Handler`'s `perform/2` has written its name onto
+  the job row for `StatifierOban.Invoke.Worker` to read back.
+
+  That matters most at the second step. When `c:deliver/3` feeds
+  `done.invoke.<invoke_id>` back and the run transitions into *another*
+  invoking state, the `<invoke>` entered there is planned by the drive
+  this delivery caused - so its handler comes from whatever registry that
+  drive was given. A `Statifier.Session` host fixed one at
+  `start_link/2` and every step sees it. A process-less host supplies one
+  per drive, and the re-entry drive is a drive like any other: give it
+  the same map the run started with, or the second `<invoke>` raises
+  `error.execution` at plan time on an unregistered `type` while the
+  first step looked perfectly healthy. The seam is not the place to fix
+  that, because the seam was never asked.
+
   The seam has two doors, not one. `c:deliver/3` carries a completed
   invocation back as `done.invoke.<invoke_id>`; `c:deliver_failure/3`
   carries a **permanently failed** one back as
