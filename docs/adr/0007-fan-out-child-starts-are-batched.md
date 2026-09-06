@@ -326,3 +326,7 @@ reaches its run: through a module the host names in its config.
 takes the parent run id, the effect, the index and the count. A host
 running `statifier_persistence` wires the start-with-index function that
 package ships for this; a host with its own run store wires its own.
+
+Recorded from the operator's `R31-9` (campaign 031, 2026-09-05), taken from
+the fan-out scale walk, and implemented by `sob-q3y` in
+`StatifierOban.Config` and `StatifierOban.Invoke.FanOut`.

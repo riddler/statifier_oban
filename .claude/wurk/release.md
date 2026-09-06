@@ -8,8 +8,23 @@ override, and nothing below rewrites a step the skill already performs.
 Read this together with `.claude/wurk.json`'s `release` block. Between them
 they name every file a release commit here touches, and no others.
 
-The reference for the shape is `ff7251b`, the 0.5.0 prep - the most recent
-release prep in this repo, and the commit every step below is modeled on.
+The reference for every shape below is **the most recent release-prep commit
+on `main`**, resolved when you read this rather than named here. Find it with:
+
+```bash
+git log --oneline --no-patch -L '/@version/,+1:mix.exs'
+```
+
+The first line is the last commit that moved `@version`, and the last commit
+that moved `@version` is the last release prep by definition. Where this file
+and that commit disagree, the commit is the evidence and this file is the
+defect.
+
+**This file names no SHA for that reference, on purpose, and carries no
+current version string anywhere - only the dated historical claims below.** A
+hard-coded reference stops being the most recent the moment the next release
+lands, which is how the 0.5.0 prep came to be named here long after 0.6.0,
+0.6.1 and 0.7.0 had passed it (corrected 2026-09-06 on `sob-kwz`).
 
 ## Why the recipe names no changelog
 
@@ -48,16 +63,26 @@ the table below, in the same change that adds it.
 ## Step B: promote the changelog fragments
 
 Placed where the skill's changelog step would have been, and modeled on the
-0.5.0 prep commit `ff7251b`, which is the reference for the shape.
+reference prep commit resolved at the top of this file.
 
 1. Read every `changelog.d/*.md` fragment except `README.md`. Each is a Keep a
    Changelog section heading followed by its bullets.
 2. Insert a new `## [X.Y.Z] YYYY-MM-DD` section into `CHANGELOG.md` directly
-   above the previous version's section, dated today. The heading form is the
+   above the previous version's section. The heading form is the
    one the file already uses throughout - the bracketed version, a single
    space, then the date, **with no `-` separator between them**. (Keep a
    Changelog's own form has the dash; this file has never used it, and a
    release is not the place to change nine headings.)
+
+   **The date is the operator's local date, not UTC** (the convention the
+   operator set on 2026-09-06). A prep run late in the local evening is cut
+   under a UTC date that is already tomorrow; writing that UTC date puts a
+   section in the file dated a day the release was not cut on, and a reader
+   comparing it against the tag or the commit date sees a discrepancy that
+   is not real. Take the date from `date +%F` on the machine cutting the prep
+   and write that. Sections already shipped are left as they stand, because
+   rewriting one to match a convention adopted after it was written buys
+   nothing and loses the record of what the published section said.
 3. Under the heading, write the fragments' bullets grouped by heading and
    ordered `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
    **Carry every bullet over byte for byte.** Reordering, consolidating or
@@ -66,9 +91,9 @@ Placed where the skill's changelog step would have been, and modeled on the
 4. A lead paragraph between the heading and the first `### ` sub-heading is
    optional here and is the exception, not the rule: `0.2.1` and `0.1.0` carry
    one because each says something the bullets do not (a documentation-only
-   release; a first release), and `ff7251b` wrote none. Write one only when
-   there is such a thing to say, and keep the reasoning for the version choice
-   in the commit body, where `ff7251b` put it.
+   release; a first release), and no prep since has written one. Write one
+   only when there is such a thing to say, and keep the reasoning for the
+   version choice in the commit body, where the reference prep puts it.
 5. **No link reference.** Unlike sibling repos, this `CHANGELOG.md` has no
    link-reference block at the end of the file and no `[X.Y.Z]:` definitions
    anywhere - the bracketed versions in the headings are deliberately
@@ -88,16 +113,28 @@ dropped that the skill's step 2 bumps.
 
 Two things about this pin that a release here has to know:
 
-- **The format precedent is `b58fb95`, not a prep commit.** No release prep in
-  this repo has ever moved the pin; `b58fb95` (the 0.2.1 docs pass) moved it
-  from `~> 0.1` to `~> 0.2` and recorded that in the 0.2.1 changelog as a fix.
-  That commit is what the skill's "check a previous release commit rather than
-  inventing the format" step should be read against here.
-- **The pin is currently stale on purpose-by-neglect**, sitting at `~> 0.2`
-  while `mix.exs` is at `0.5.0`. The next release run through this recipe will
-  therefore move it by more than one minor. That is the recipe correcting a
-  drift, not a mistake to undo: `~> 0.2` no longer admits the version being
-  released. Say so in the release commit body when it happens.
+- **The format precedent is `b58fb95` for the pin's shape, and the reference
+  prep for the move.** `b58fb95` (the 0.2.1 docs pass) moved the pin from
+  `~> 0.1` to `~> 0.2` and recorded that in the 0.2.1 changelog as a fix; for
+  a long time no release prep had moved it at all, which is what that
+  precedent was here to cover. Preps now move it themselves, so the skill's
+  "check a previous release commit rather than inventing the format" step
+  reads against the reference prep resolved at the top of this file, with
+  `b58fb95` as the older fallback.
+- **The pin's current value is not written down here**, for the same reason no
+  current version is. Read it and check it against the version file instead:
+
+  ```bash
+  grep 'statifier_oban, "~>' README.md   # the pin
+  grep '@version "' mix.exs              # the version it should track
+  ```
+
+  They should agree on major and minor. If they ever do not, the pin edit
+  repairs the drift in one move rather than stepping one release at a time: it
+  goes straight to the current major/minor, because the stale constraint no
+  longer admits the version being released. That is the recipe correcting a
+  drift, not a mistake to undo - say so in the release commit body when it
+  happens.
 
 ## The files a release commit touches
 

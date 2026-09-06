@@ -188,25 +188,31 @@ defmodule StatifierOban.Invoke.Handler do
   `items` is the **evaluated** list - `sb-ADR-0009` decision 3 compiles
   the `items` datamodel path into the `<param>` list and makes the
   handler what evaluates it, and a job has the effect but no datamodel,
-  so a handler that fans out reads the list off `invoke.params` (or
-  builds it however it likes) and returns it here. Only its length is
+  so what a handler that fans out reads off `invoke.params` is that
+  **path**: it evaluates the path itself and returns the resulting list
+  here (or builds the list however it likes). Only its length is
   read by this package; what the items are is the handler's business,
   and each one is bound to its child by the
   `StatifierOban.Invoke.ChildStarter` seam.
 
-  `opts` carries `:max_concurrency`, the author's hint, when the block
-  declared one. It is shape-validated and then clamped to the queue's
-  own limit in both directions - see `StatifierOban.Invoke.FanOut`.
+  `opts` is the handler's own, not the chart's. `core.map` declares no
+  concurrency field - `sb-ADR-0009` decision 4 leaves that block field
+  deferred - so nothing arrives in `params` to pass along. A handler
+  with a width hint of its own passes `max_concurrency: n`, which is
+  shape-validated and then clamped to the queue's own limit in both
+  directions; a hint below that limit is not honoured - see
+  `StatifierOban.Invoke.FanOut`.
 
   A handler returning this delivers no `done.invoke`: the invocation
   stays open until the settlement side answers it once, on behalf of
   all N. An **empty** `items` list is the one exception - a fan-out over
   nothing succeeds over nothing (`sb-ADR-0009` decision 8), so no child
   starts and the invocation is answered immediately with `[]`. A fan-out
-  refused before any child starts - over
-  `:max_fan_out`, or not a list - fails the invocation on
-  `error.communication.invoke.<invoke_id>` instead (ADR-0007 decision
-  8).
+  refused before any child starts - over `:max_fan_out`, not a list, or
+  carrying an `on` that is neither `"all"` nor `"first_error"` - fails
+  the invocation on `error.communication.invoke.<invoke_id>` instead
+  (ADR-0007 decision 8). Those three refusals are the whole list;
+  `t:StatifierOban.Invoke.FanOut.refusal/0` names them.
   """
   @type fan_out :: {:fan_out, items :: list()} | {:fan_out, items :: list(), opts :: keyword()}
 
