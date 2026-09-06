@@ -272,10 +272,11 @@ from one created on the first, and a seam error in between is Oban's
 `[:oban, :job, :exception]`, not a name here.
 
 `handler` is on `:fan_out` alone. `ChildStartWorker` reads the handler *name*
-off the row and never resolves it to a module, and `cancel_unstarted/3` is given
-a scope and an invoke id and nothing else; putting a string where every other
-event's `handler` is a module would be worse than the absence. The module is
-already on `:enqueued` and on `:fan_out`, both under the same `invoke_id`.
+off the row and never resolves it to a module, and `cancel_unstarted/3` is
+given the config, a scope and an invoke id, and no handler at all; putting a
+string where every other event's `handler` is a module would be worse than the
+absence. The module is already on `:enqueued` and on `:fan_out`, both under the
+same `invoke_id`.
 
 `index` is bounded by the deployment's `:max_fan_out`, and it is a **position,
 not a metric dimension**: folding it into a label gives one series per child of

@@ -236,7 +236,7 @@ matching one-word precision in the same change; no event, measurement, or
 metadata key in this record changes, so this is a precision Note rather than
 an amendment under decision 4.
 
-## Amendment (2026-09-06, sob-28m): the fan-out seam mints three events
+## Amendment (2026-09-06): the fan-out seam mints three events
 
 Status: proposed (2026-09-06, sob-28m)
 
@@ -302,11 +302,12 @@ upstream's convention of carrying integer-valued positions as metadata -
 **`handler` is on `:fan_out` alone.** Not out of thrift: neither of the other
 two has one to report. `ChildStartWorker` reads the handler *name* off the job
 row and never resolves it to a module - resolution is the answering worker's,
-and a start job has no reason to load it - and `cancel_unstarted/3` takes a
-scope and an invoke id and nothing else. Putting a string where every other
-event's `handler` is a module would be worse than the absence. The bridge
-already has the module from `[:statifier_oban, :invoke, :enqueued]` and from
-`:fan_out`, both keyed by the same `invoke_id`.
+and a start job has no reason to load it - and `cancel_unstarted/3` is handed
+the config, a scope and an invoke id, and no handler at all. Putting a string
+where every other event's `handler` is a module would be worse than the
+absence. The bridge already has the module from
+`[:statifier_oban, :invoke, :enqueued]` and from `:fan_out`, both keyed by the
+same `invoke_id`.
 
 **`:child_started` is delivery-shaped though it delivers nothing.** It is
 emitted inside the job, on the node that ran it, and carries the job's own
