@@ -10,7 +10,9 @@ defmodule StatifierOban.Invoke.FanOut do
   a replay starts only what is missing.
 
   Nothing in this module creates a run or answers an invocation. It
-  enqueues, refuses, and cancels.
+  enqueues, refuses, cancels, and - for the one fan-out that is over
+  before it starts - hands the empty accumulated list back for the
+  caller to answer with.
 
   ## The shape of a fan-out
 
@@ -20,6 +22,7 @@ defmodule StatifierOban.Invoke.FanOut do
   invocation is N children, not an answer": the fan-out job enqueues the
   starts and completes **without delivering**, and the invocation stays
   open until the settlement side answers it once, on behalf of all N.
+  N = 0 is the exception, and it has its own section below.
 
   `items` is the evaluated list, not a path: `sb-ADR-0009` decision 3
   puts the `items` datamodel path in the compiled `<param>` list and
@@ -50,7 +53,6 @@ defmodule StatifierOban.Invoke.FanOut do
   |---|---|
   | `:cap_exceeded` | the list is longer than the config's `:max_fan_out`; `detail` also carries `count` and `cap` |
   | `:invalid_items` | the handler returned something that is not a list |
-  | `:empty_items` | the list is empty (see below) |
   | `:invalid_policy` | the invocation's `on` parameter is neither `"all"` nor `"first_error"` (see below) |
 
   A refusal is delivered on the invocation's ordinary error route,
@@ -80,14 +82,32 @@ defmodule StatifierOban.Invoke.FanOut do
   handler that could override it would be deciding an aggregation the
   document already decided.
 
-  **The empty list is refused rather than answered**, and that is a
-  deliberately conservative reading of a gap. A fan-out of zero children
-  has no child whose settlement could answer the invocation, so starting
-  nothing would park the chart forever; answering it here with an empty
-  result would mean this package minting an answer, which is the
-  settlement side's to mint and `sb-ADR-0009` decision 5's to shape.
-  Refusing is the one option that neither hangs nor invents, and it is
-  the option to revisit when a record decides the empty case.
+  ## The empty fan-out succeeds over nothing
+
+  `items` resolving to `[]` is not a refusal. `sb-ADR-0009` decision 8
+  records that an empty list is *a successful fan-out over nothing*:
+  zero children start, the accumulated list is `[]`, and the block takes
+  `done` immediately. A workflow that maps over a list which happened to
+  be empty this time has not failed, and `start/5` says so by returning
+  `{:empty, []}` - no start job is enqueued and the caller answers the
+  invocation with that list.
+
+  That is not this package minting an answer. For N children the answer
+  is the settlement side's, because it is assembled from N answers that
+  only that side has. For N = 0 there is no settlement to run and no
+  payload to assemble: `[]` is the whole of the index-ordered list, and
+  it is arithmetic rather than a verdict. Refusing instead - which this
+  module did until `sob-as0` - made the two shipped layers disagree
+  about the same list, which `sb-ADR-0011` recorded as a deferred
+  question and the operator ruled here on 2026-09-06.
+
+  The refusals above are still checked first, so an empty list on an
+  invocation whose `on` is an unrecognised word is refused rather than
+  answered: an unreadable aggregation policy is a fact about the
+  document, true whatever N turns out to be. The `:invoke_queue` and
+  `:child_starter` options are read the same way, before the count is
+  acted on, because a host whose fan-out seam is unconfigured is
+  misconfigured whether or not this particular list was empty.
   """
 
   import Ecto.Query, only: [where: 3]
@@ -106,7 +126,7 @@ defmodule StatifierOban.Invoke.FanOut do
   (ADR-0006 decision 9).
   """
   @type refusal :: %{
-          required(:reason) => :cap_exceeded | :invalid_items | :empty_items | :invalid_policy,
+          required(:reason) => :cap_exceeded | :invalid_items | :invalid_policy,
           optional(:count) => non_neg_integer(),
           optional(:cap) => pos_integer()
         }
@@ -129,19 +149,23 @@ defmodule StatifierOban.Invoke.FanOut do
   codec once per fan-out rather than once per child.
 
   Returns `:ok` when every start job is enqueued (or conflicts with one
-  already stored, which is the same thing - decision 4), `{:refused,
-  refusal}` when the fan-out is refused before any child starts, and
-  `{:error, reason}` when scheduling could not happen right now and the
-  fan-out job should retry.
+  already stored, which is the same thing - decision 4), `{:empty,
+  collected}` when `items` is `[]` and the fan-out is therefore over
+  before it starts - `collected` is the empty accumulated list the
+  caller answers the invocation with - `{:refused, refusal}` when the
+  fan-out is refused before any child starts, and `{:error, reason}`
+  when scheduling could not happen right now and the fan-out job should
+  retry.
 
   `invoke` is the decoded effect, read for its `on` parameter and
   nothing else; `items` is the handler's evaluated list; `opts` carries
   the author's `:max_concurrency` hint when there is one. Only the
-  list's length is read here; a non-list, an empty list, a list longer
-  than the cap, and an unrecognised `on` are the four refusals above.
+  list's length is read here; a non-list, a list longer than the cap,
+  and an unrecognised `on` are the three refusals above, and an empty
+  list is the success over nothing.
   """
   @spec start(Config.t(), JobArgs.args(), Invoke.t(), term(), keyword()) ::
-          :ok | {:refused, refusal()} | {:error, start_error()}
+          :ok | {:empty, []} | {:refused, refusal()} | {:error, start_error()}
   def start(%Config{} = config, args, %Invoke{} = invoke, items, opts)
       when is_map(args) and is_list(opts) do
     with {:ok, count} <- counted(items, config.max_fan_out),
@@ -186,10 +210,11 @@ defmodule StatifierOban.Invoke.FanOut do
 
   # -- the cap, checked before anything is enqueued (ADR-0007 decision 8)
 
-  @spec counted(term(), pos_integer()) :: {:ok, pos_integer()} | {:refused, refusal()}
+  # Zero is a count like any other here: it passes, and `enqueue_all/6`
+  # is where having nothing to enqueue becomes the empty answer.
+  @spec counted(term(), pos_integer()) :: {:ok, non_neg_integer()} | {:refused, refusal()}
   defp counted(items, cap) when is_list(items) do
     case length(items) do
-      0 -> {:refused, %{reason: :empty_items}}
       count when count > cap -> {:refused, %{reason: :cap_exceeded, count: count, cap: cap}}
       count -> {:ok, count}
     end
@@ -237,15 +262,21 @@ defmodule StatifierOban.Invoke.FanOut do
   # a resumed fan-out starts only what is missing (decision 3). Not
   # `Oban.insert_all/3`, which does not apply Oban's unique option and
   # would trade exactly that property for atomicity - the context of
-  # ADR-0007 says why at length.
+  # ADR-0007 says why at length. Zero children is the degenerate case of
+  # the same loop: nothing is enqueued and the accumulated list is
+  # already complete, so it returns the empty answer instead of `:ok`
+  # (`sb-ADR-0009` decision 8; the moduledoc says why that is not a
+  # minted answer).
   @spec enqueue_all(
           Config.t(),
           JobArgs.args(),
           atom() | String.t(),
           module(),
-          pos_integer(),
+          non_neg_integer(),
           ChildStarter.policy()
-        ) :: :ok | {:error, start_error()}
+        ) :: :ok | {:empty, []} | {:error, start_error()}
+  defp enqueue_all(_config, _args, _queue, _starter, 0, _policy), do: {:empty, []}
+
   defp enqueue_all(config, args, queue, starter, count, policy) do
     meta = %{"child_starter" => Atom.to_string(starter)}
 

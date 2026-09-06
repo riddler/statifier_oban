@@ -49,7 +49,11 @@ defmodule StatifierOban.Invoke.Worker do
     rather than an answer: `StatifierOban.Invoke.FanOut` enqueues one
     start job per item and the job completes **without delivering**,
     leaving the invocation open for the settlement side to answer once
-    (ADR-0007). A fan-out refused before any child starts - over the
+    (ADR-0007). An **empty** `items` list is the exception: it is a
+    successful fan-out over nothing (`sb-ADR-0009` decision 8), so no
+    start job goes out and the job answers the invocation with `[]`
+    itself, exactly as it answers with a `run/1` result. A fan-out
+    refused before any child starts - over the
     cap, or a list that is not one - cancels with
     `{:fan_out_refused, refusal}` and delivers
     `error.communication.invoke.<invoke_id>` on the way past; one that
@@ -166,18 +170,7 @@ defmodule StatifierOban.Invoke.Worker do
         fan_out(job, delivery, scope, handler, invoke, items, opts)
 
       {:ok, donedata} ->
-        # ADR-0006's delivery seam, the invoke half: the discard is a
-        # completed invocation landing on a run that is no longer live,
-        # which Oban reports as a stop with the verdict inside `:result`.
-        case deliver_done(delivery, scope, invoke, donedata) do
-          :delivered ->
-            Telemetry.invoke_delivered(scope, handler, invoke, delivery, job)
-            :ok
-
-          {:discarded, reason} ->
-            Telemetry.invoke_discarded(scope, handler, invoke, delivery, reason, job)
-            {:cancel, {:discarded, reason}}
-        end
+        answer(job, delivery, scope, handler, invoke, donedata)
 
       {:error, {:run_failed, reason}} = failed ->
         maybe_fail(job, delivery, scope, handler, invoke, "run_failed", inspect(reason))
@@ -185,10 +178,45 @@ defmodule StatifierOban.Invoke.Worker do
     end
   end
 
+  # ADR-0006's delivery seam, the invoke half: the discard is a completed
+  # invocation landing on a run that is no longer live, which Oban reports
+  # as a stop with the verdict inside `:result`. Both arms that answer an
+  # invocation from this job come through here - `run/1`'s own
+  # `{:ok, donedata}` and the empty fan-out's `[]` - because they are the
+  # same delivery through the same liveness-checked door, and only what
+  # produced the answer differs.
+  @spec answer(
+          Oban.Job.t(),
+          module(),
+          String.t(),
+          module(),
+          Statifier.Effect.Invoke.t(),
+          term()
+        ) :: :ok | {:cancel, term()}
+  defp answer(job, delivery, scope, handler, invoke, donedata) do
+    case deliver_done(delivery, scope, invoke, donedata) do
+      :delivered ->
+        Telemetry.invoke_delivered(scope, handler, invoke, delivery, job)
+        :ok
+
+      {:discarded, reason} ->
+        Telemetry.invoke_discarded(scope, handler, invoke, delivery, reason, job)
+        {:cancel, {:discarded, reason}}
+    end
+  end
+
   # The fan-out arm: this invocation is N children rather than an answer,
   # so the job enqueues the starts and completes **without delivering**
   # (ADR-0007). The invocation stays open until the settlement side
   # answers it once, on behalf of all N.
+  #
+  # N = 0 is the exception, and it is not a settlement being minted here:
+  # an empty `items` list is a successful fan-out over nothing
+  # (`sb-ADR-0009` decision 8), so no child starts, the accumulated list
+  # is already `[]`, and this job answers the invocation with it
+  # immediately through the ordinary done door. There is no settlement to
+  # wait for because there is no child to settle, and leaving the
+  # invocation open would park the chart forever.
   #
   # A refusal is delivered before the cancel for `fail_undecodable/2`'s
   # reason: the job cancels rather than retrying - no retry makes a list
@@ -209,6 +237,9 @@ defmodule StatifierOban.Invoke.Worker do
     case FanOut.start(handler.config(), job.args, invoke, items, opts) do
       :ok ->
         :ok
+
+      {:empty, collected} ->
+        answer(job, delivery, scope, handler, invoke, collected)
 
       {:refused, refusal} ->
         detail = inspect(refusal)

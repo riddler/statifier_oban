@@ -260,3 +260,44 @@ there rather than settled here.
 
 Recorded from the operator's ruling `RQ-031-1` option (a) (campaign 031,
 2026-09-05), and implemented by `sob-q3y` in `StatifierOban.Invoke.Worker`.
+
+## Note (2026-09-06): the empty fan-out is answered, not refused
+
+The 2026-09-05 Note above closed with a question it declined to settle -
+*"Whether an empty `core.map` ought instead to answer with an empty result is
+a question for the record that owns what the block does with its answers, and
+is filed there rather than settled here."* That record had in fact already
+answered it. `sb-ADR-0009` decision 8, accepted 2026-09-01, says an `items`
+list resolving to `[]` is **a successful fan-out over nothing**: zero children
+start, the accumulated list is written as `[]`, and the block takes `done`
+immediately. `sb-ADR-0011` recorded the disagreement between that record and
+this package's shipped refusal as a deferred question, and the operator ruled
+it on 2026-09-06 (campaign 033, `sob-as0` / `sb-xwhj`): the record wins and
+the handler changes.
+
+**`:empty_items` is gone from `:detail`.** The refusals this Note's parent
+describes are now three, not four -
+`%{reason: :cap_exceeded, count: N, cap: C}`, `%{reason: :invalid_items}` and
+`%{reason: :invalid_policy}` - and an empty list reaches none of them.
+`StatifierOban.Invoke.FanOut.start/5` returns `{:empty, []}` for it and
+`StatifierOban.Invoke.Worker` delivers that list on the invocation's ordinary
+`done.invoke` door, the same door and the same shape a `run/1` answer takes.
+
+**Nothing else in this record moves.** The `"fan_out_refused"` class stays,
+with the two refusals it still carries; `:attempts` is still the attempt that
+found the fault; the terminal-attempt rule of decision 1 is untouched; and no
+new event name, function or error family is created. An empty fan-out is a
+success, so it never reaches the failure door at all.
+
+**Why answering it here is not this package minting an answer.** For N
+children the answer is assembled from N answers only the settlement side
+holds, which is why this package does not mint it. For N = 0 there is no
+settlement to run and nothing to assemble: `[]` is the whole of the
+index-ordered list. Refusing instead left a chart that mapped over a list
+which happened to be empty this time failing on
+`error.communication.invoke.<invoke_id>`, which is the outcome
+`sb-ADR-0009` decision 8 exists to rule out.
+
+Recorded from the operator's ruling on `sob-as0` (campaign 033, 2026-09-06),
+and implemented by `sob-as0` in `StatifierOban.Invoke.FanOut` and
+`StatifierOban.Invoke.Worker`.

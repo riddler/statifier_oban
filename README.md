@@ -304,7 +304,10 @@ end
 That return says "this invocation is N children, not an answer": the job
 enqueues one start job per index and completes **without delivering**, and
 the invocation stays open until the settlement side answers it once, on
-behalf of all N. All N start jobs go out up front - there are no slices, and
+behalf of all N. An empty `items` list is the one exception: a fan-out over
+nothing succeeds over nothing, so no start job goes out and the job answers
+the invocation with `[]` immediately (`sb-ADR-0009` decision 8). All N start
+jobs go out up front - there are no slices, and
 the queue's own concurrency limit is what bounds how many children run at
 once. An author's `max_concurrency` is shape-validated and clamped to that
 limit in both directions; a hint below it is not honoured (ADR-0007 and its
