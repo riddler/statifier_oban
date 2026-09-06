@@ -1,7 +1,7 @@
 defmodule StatifierOban.MixProject do
   use Mix.Project
 
-  @version "0.8.0"
+  @version "0.9.0"
   @source_url "https://github.com/riddler/statifier_oban"
 
   def project do

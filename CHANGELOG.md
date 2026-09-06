@@ -10,6 +10,25 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.9.0] 2026-09-06
+
+A fan-out is no longer invisible in the telemetry stream. Three events are
+added - `:fan_out` when the child starts are stored, `:child_started` when
+the `ChildStarter` seam creates one, and `:unstarted_cancelled` when a
+`first_error` cancel sweeps the rest - taking
+`StatifierOban.Telemetry.events/0` from eleven names to fourteen. A host
+that calls `StatifierOban.Invoke.FanOut.start/5` directly now reads
+`{:ok, summary}` on success where it read a bare `:ok` before; the other
+three return shapes are unchanged.
+
+### Added
+
+- Three fan-out telemetry events, taking `StatifierOban.Telemetry.events/0` from eleven names to fourteen: `[:statifier_oban, :invoke, :fan_out]` when an invocation's N child starts are stored, `[:statifier_oban, :invoke, :child_started]` when the host's `ChildStarter` seam creates one child, and `[:statifier_oban, :invoke, :unstarted_cancelled]` when a `first_error` cancel sweeps the starts that had not run. A fan-out was previously invisible in this stream: it delivers nothing, so no `:delivered` event fired for it, and a cancelled sibling was reported nowhere at all (ADR-0006's 2026-09-06 amendment).
+
+### Changed
+
+- `StatifierOban.Invoke.FanOut.start/5` returns `{:ok, summary}` rather than `:ok` on success, where `summary` is `%{count:, policy:, queue:}` - what the caller needs to emit `[:statifier_oban, :invoke, :fan_out]` without reading the invocation's `on` parameter a second time. `{:empty, []}`, `{:refused, _}` and `{:error, _}` are unchanged.
+
 ## [0.8.0] 2026-09-06
 
 No new public surface: this release changes what an existing arm does. A
