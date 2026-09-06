@@ -10,6 +10,17 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.8.0] 2026-09-06
+
+No new public surface: this release changes what an existing arm does. A
+fan-out whose `items` list comes back empty used to fail the invocation;
+it now completes it. Nothing on the caller's side has to change for that
+to take effect.
+
+### Changed
+
+- A fan-out over an empty `items` list succeeds over nothing: no child starts, the invocation is answered immediately with `[]`, and the `:empty_items` refusal reason is gone (`sb-ADR-0009` decision 8).
+
 ## [0.7.0] 2026-09-05
 
 ### Added
