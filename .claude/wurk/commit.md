@@ -40,6 +40,24 @@ this project's convention (CLAUDE.md: sabotage every new test that asserts
   which tests are unverified instead.
 - There are no exempt test roots here (`gate.sabotage.exempt_prefixes` is
   empty); every `lib/`-asserting test carries a note.
+- **StreamData properties are scanned too.** `gate.sabotage.test_pattern` is
+  `\b(?:test|property)\s+"`, so a `property "..." do` declaration is held to
+  the same bar as a `test "..." do` one. It was `\btest\s+"` until sob-fc0
+  (2026-09-06), which is why the properties in
+  `test/statifier_oban/timer/key_property_test.exs` and
+  `test/statifier_oban/timer/job_args_test.exs` were verified by hand rather
+  than by the scan.
+- **Put the note directly above the declaration, not above the `describe`.**
+  The scan walks upward from the declaration over the *contiguous* run of
+  comment lines and stops at the first non-comment line, so a note sitting
+  above the enclosing `describe` is invisible to it - the declaration reads
+  as unnoted even though a human sees the note. A note covering two
+  declarations is repeated above each.
+- The marker itself is matched **case-insensitively** (`/#\s*sabotage:/i` in
+  the wurk kit, per the operator's 2026-08-27 ruling to fix the scanner
+  rather than the convention), so `# Sabotage:` is recognised. This repo
+  writes it lowercase throughout (cd3e0e9); keep to that for consistency, not
+  because the scan requires it.
 
 ## Changelog: fragments, judged by changelog.d/README.md
 

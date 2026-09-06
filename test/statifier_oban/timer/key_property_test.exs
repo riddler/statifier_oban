@@ -29,10 +29,11 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # sabotage: changed the `validated_scope/1` success clause to return
-  # `{:ok, "fixed"}` instead of `{:ok, scope}` - property went red (two
-  # distinct scopes produced equal dedup keys), reverted. Verified for real.
   describe "scope separates runs" do
+    # sabotage: changed the `validated_scope/1` success clause to return
+    # `{:ok, "fixed"}` instead of `{:ok, scope}` - property went red (two
+    # distinct scopes produced equal dedup keys), reverted. Verified for
+    # real.
     property "distinct scopes never produce equal dedup or cancellation keys for the same send" do
       check all(
               scope_a <- scope(),
@@ -108,12 +109,12 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # sabotage: changed `cancellation_key/2`'s `SendDelayed` clause to fold
-  # `c_index` into the `send_id` passed to `build_cancellation_key/2`
-  # (`"#{send_id}-#{c_index}"`) - the property went red (two effects
-  # sharing scope/send_id but differing c_index stopped sharing a
-  # cancellation key), reverted. Verified for real.
   describe "cancellation key ignores position" do
+    # sabotage: changed `cancellation_key/2`'s `SendDelayed` clause to fold
+    # `c_index` into the `send_id` passed to `build_cancellation_key/2`
+    # (`"#{send_id}-#{c_index}"`) - the property went red (two effects
+    # sharing scope/send_id but differing c_index stopped sharing a
+    # cancellation key), reverted. Verified for real.
     property "effects sharing scope and send_id share a cancellation key that cancels both" do
       check all(
               scope <- scope(),
@@ -134,12 +135,12 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # sabotage: changed `cancellation_key/2`'s `Cancel` clause to read
-  # `send_id <> "!"` instead of `send_id` (mirroring the example test's own
-  # sabotage on the `SendDelayed` clause) - the property went red (a
-  # SendDelayed and a Cancel sharing a send_id stopped producing equal
-  # cancellation keys), reverted. Verified for real.
   describe "Cancel/SendDelayed agreement" do
+    # sabotage: changed `cancellation_key/2`'s `Cancel` clause to read
+    # `send_id <> "!"` instead of `send_id` (mirroring the example test's
+    # own sabotage on the `SendDelayed` clause) - the property went red (a
+    # SendDelayed and a Cancel sharing a send_id stopped producing equal
+    # cancellation keys), reverted. Verified for real.
     property "cancellation key derived from a SendDelayed equals one derived from a matching Cancel" do
       check all(
               scope <- scope(),
@@ -154,11 +155,11 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  # sabotage: changed `validated_scope/1`'s fallback clause to
-  # `defp validated_scope(_scope), do: {:ok, "default"}` - both properties
-  # went red (nil/"" and non-binary scopes stopped erroring), reverted.
-  # Verified for real.
   describe "scope is mandatory" do
+    # sabotage: changed `validated_scope/1`'s fallback clause to
+    # `defp validated_scope(_scope), do: {:ok, "default"}` - both properties
+    # in this block went red (nil/"" and non-binary scopes stopped
+    # erroring), reverted. Verified for real.
     property "nil, empty, and generated non-binary scopes always error" do
       non_binary_scope = one_of([constant(nil), constant(""), integer(), atom(:alphanumeric)])
 
@@ -167,6 +168,10 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
       end
     end
 
+    # sabotage: changed `validated_scope/1`'s fallback clause to
+    # `defp validated_scope(_scope), do: {:ok, "default"}` - both properties
+    # in this block went red (nil/"" and non-binary scopes stopped
+    # erroring), reverted. Verified for real.
     property "nil, empty, and generated non-binary scopes always error for dedup_key/2" do
       non_binary_scope = one_of([constant(nil), constant(""), integer(), atom(:alphanumeric)])
 

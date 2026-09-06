@@ -32,7 +32,7 @@
     "moving_files": [".quality.exs", "coveralls.json"],
     "sabotage": {
       "test_roots": ["test/"],
-      "test_pattern": "\\btest\\s+\"",
+      "test_pattern": "\\b(?:test|property)\\s+\"",
       "exempt_prefixes": []
     },
     "project_level_skips": [],
