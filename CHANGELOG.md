@@ -10,6 +10,14 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.9.1] 2026-09-06
+
+### Changed
+
+- The README and `StatifierOban.Invoke.Delivery` now state where an
+  `<invoke>` handler is resolved from on every step, including the second
+  one a completed invoke re-enters.
+
 ## [0.9.0] 2026-09-06
 
 A fan-out is no longer invisible in the telemetry stream. Three events are
