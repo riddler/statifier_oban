@@ -373,9 +373,9 @@ that justifies it. This Note records that verdict and the flip, taken by
 the separate gated PR consent clause 11 asks a flip to take.
 
 The direction review ran two cold passes. Pass 1 returned QUALIFIED with
-three findings, all record-prose and none blocking; the cure `d1c7f38`
-answered them in-branch; the scope-frozen pass 2, a fresh cold agent,
-returned UNQUALIFIED with zero findings.
+three findings, all record-prose and none blocking; the cure answered them
+in-branch and reached main inside `c9046ed`; the scope-frozen pass 2, a
+fresh cold agent, returned UNQUALIFIED with zero findings.
 
 Every claim the amendment makes was re-verified against `main` at
 `c9046ed` before this flip, not against the code as it stood when the
