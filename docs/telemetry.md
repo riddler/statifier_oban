@@ -227,12 +227,12 @@ ADR-0005 already records that limit; they ride Oban's exception event.
 ### Fan-out seam
 
 Emitted around the fan-out ADR-0007 defines: one `core.map`-shaped invocation
-becomes one fan-out job, N child start jobs under it, and - under `first_error`
-- a cancel of the starts that have not run. **None of these three is an
-answer.** The fan-out job completes without delivering, a child start creates a
-run and delivers nothing, and the invocation is answered once by the settlement
-side on behalf of all N. `ADR-0006`'s 2026-09-06 amendment records why each one
-is here.
+becomes one fan-out job, N child start jobs under it, and - under
+`first_error` - a cancel of the starts that have not run. **None of these
+three is an answer.** The fan-out job completes without delivering, a child
+start creates a run and delivers nothing, and the invocation is answered once
+by the settlement side on behalf of all N. `ADR-0006`'s 2026-09-06 amendment
+records why each one is here.
 
 | Event | Emitted from | Measurements | Metadata |
 |---|---|---|---|
