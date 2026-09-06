@@ -191,9 +191,10 @@ defmodule StatifierOban.Invoke.FanOut do
 
   The match is `{scope, invoke_id}` across every index and every
   generation, restricted to the states a start job that has not run can
-  be in (`StatifierOban.CancellableStates`). So a child already created
-  is left alone: its start job is `completed` and outside the match, and
-  cancelling the run it created is the live half's job, not this one's.
+  be in - the set the private StatifierOban.CancellableStates module
+  lists. So a child already created is left alone: its start job is
+  `completed` and outside the match, and cancelling the run it created
+  is the live half's job, not this one's.
   A job `executing` right now is out for the same reason it is out of
   `StatifierOban.Invoke.Handler.perform_cancel/3` - killing a start
   mid-flight would leave a half-created child - and the match ignores
