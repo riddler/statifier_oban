@@ -260,6 +260,42 @@ catch every kind of communication failure at once transitions on the bare
 `error.communication` instead, and catches this too. See ADR-0005 and
 statifier-ex's ADR-0068.
 
+#### Where each step's handler comes from
+
+`invoke_handlers` above is the whole answer, and it answers for **every**
+`<invoke>` a run reaches, not only the first. The lookup is the engine's,
+not this package's: when a drive plans an `<invoke>`, it looks the `type` up
+in that run's registry (statifier-ex's ADR-0051 decision 4) and hands the
+matching module the planning call. This package only ever sees a module that
+lookup already chose - `StatifierOban.Invoke.Handler`'s `perform/2` writes
+its name onto the job row, and `StatifierOban.Invoke.Worker` reads that name
+back when the job runs, possibly days later on another node.
+
+Two consequences are worth stating outright, because a host met both:
+
+- **There is no `handlers:` option anywhere in this package** - not on the
+  job, not on `StatifierOban.Config`, not on the delivery seam. A
+  per-delivery handler map is not a thing to configure:
+  `StatifierOban.Invoke.Delivery` is asked only about the invocation that
+  just finished.
+- **A chart whose answer transitions into another invoking state resolves
+  the second handler on the drive that answer caused.** A run reaching that
+  drive with a registry that is missing the second `type` gets
+  `error.execution` at plan time - the same class an unregistered type
+  always raises, arriving on the second step rather than the first. The
+  fault is a registry that differs between entry paths, not a delivery that
+  dropped something.
+
+A host running `Statifier.Session` fixes the registry once, at
+`start_link/2`, so every step of the run sees the same map by construction.
+A **process-less host** - one that persists positions and drives the
+interpreter per event, the shape `StatifierOban.Invoke.Delivery`'s moduledoc
+describes - supplies the registry per drive instead, and the re-entry drive a
+completed invoke triggers is a drive like any other. Build the map in one
+place and hand it to every drive, the delivery seam's re-entry included; a
+map assembled only on the path that *starts* a run is exactly the
+second-step failure above.
+
 ### The same two seams in a signup wizard
 
 Nothing above is specific to card processing. A signup wizard with an A/B test
