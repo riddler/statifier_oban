@@ -4,12 +4,11 @@ defmodule StatifierOban.ObanHarnessTest do
 
   alias StatifierOban.{TestRepo, TestWorker}
 
-  # These tests assert the ADR-0002 harness (Oban Lite on SQLite) and Oban
-  # itself, not lib/ code, so the sabotage rule for lib/-asserting tests
-  # does not apply here.
-
   @oban_name StatifierOban.HarnessOban
 
+  # sabotage: n/a - this asserts the ADR-0002 test harness (Oban Lite on
+  # SQLite) and Oban itself, not lib/ code, so there is no lib/ mutation
+  # that could red it.
   test "inserts and executes a trivial job on a host-supplied Oban instance" do
     Process.register(self(), :statifier_oban_harness_listener)
 
@@ -26,6 +25,9 @@ defmodule StatifierOban.ObanHarnessTest do
     assert_received {:performed, %{"ref" => "sob-2hx.2"}}
   end
 
+  # sabotage: n/a - `mix.exs` declares no `mod:`, so there is no application
+  # module and no lib/ code to break. The empty supervision tree ADR-0002
+  # requires is the absence of a callback, not a line a mutation could red.
   test "the package's application starts no Oban instance of its own" do
     # ADR-0002: the supervision tree stays empty; Oban's default name is
     # not running unless a test starts it.

@@ -72,13 +72,21 @@ section at release and removed.
 
 ## Version bump: never
 
-`mix.exs` holds `0.6.0` (release prepared 2026-09-02 on the `sob-jmr` bead;
-0.4.0, published 2026-09-01, is still the last version actually on Hex - the
-tag and the publish are the operator's) until a release bead says otherwise,
-and the authority table marks releases and version bumps as never an
-agent's. Never edit the version field as part of an ordinary commit,
-and do not update this number here as a convenience - the released version
-moves only through a release bead, which updates this line with it.
+`mix.exs`'s `@version` is the version this package is at, and it moves only
+through a release bead; the authority table marks releases and version bumps
+as never an agent's otherwise. **No current version string is written here**,
+because one written down goes stale the moment a prep lands - it said `0.6.0`
+from 2026-09-02 until 2026-09-06 while `main` had moved to `0.7.0` twice
+over. Read the two facts instead:
+
+```bash
+grep '@version "' mix.exs                 # what the package is at
+git tag --list --sort=-v:refname | head -1  # what the operator has tagged
+```
+
+The tag and the Hex publish are the operator's, so the tagged version lags the
+attribute whenever a prep has landed and not yet been published. Never edit
+the version field as part of an ordinary commit.
 
 ## Gate thresholds are the operator's call
 
