@@ -290,13 +290,40 @@ defmodule MyApp.MapHandler do
   @impl StatifierOban.Invoke.Handler
   def config, do: MyApp.statifier_oban_config()
 
+  # `run/2` rather than `run/1`, because the list is not on the effect.
+  # `core.map` compiles its `items` field into the params as a quoted
+  # literal (`sb-ADR-0009` decision 3), so `invoke.params["items"]` is
+  # the datamodel *path* the author typed - `"chunks"` - and never the
+  # list itself: the emitted bytes are the same over any N. A job holds
+  # the effect and no datamodel, so evaluating that path is the
+  # handler's work, against the parent run's own persisted position -
+  # which is what the job's scope names.
   @impl StatifierOban.Invoke.Handler
-  def run(invoke) do
-    # The compiled block carries the `items` datamodel path, so the
-    # evaluated list arrives in `params`. Fan out over descriptors - ids,
-    # ranges - not over row payloads: the list lives in the parent run's
-    # datamodel for the run's whole life.
-    {:fan_out, invoke.params["items"], max_concurrency: invoke.params["max_concurrency"]}
+  def run(invoke, %{scope: parent_run_id}) do
+    with {:ok, path} <- items_path(invoke),
+         {:ok, machine_state} <- MyApp.Runs.machine_state(parent_run_id) do
+      # Fan out over descriptors - ids, ranges - not over row payloads:
+      # every start job reads this list again, and it lives in the
+      # parent run's datamodel for the run's whole life.
+      resolve(machine_state.datamodel, path)
+    end
+  end
+
+  defp items_path(%{params: %{"items" => path}}) when is_binary(path) and path != "",
+    do: {:ok, path}
+
+  defp items_path(invoke), do: {:error, {:items_missing, invoke.invoke_id}}
+
+  # A dotted walk over the string-keyed datamodel. What the block emits
+  # is a path and not an expression, so a host that evaluated it as one
+  # would be inventing a capability `core.map` deliberately withheld.
+  # Neither refusal is a condition a retry changes.
+  defp resolve(datamodel, path) do
+    case get_in(datamodel, String.split(path, ".")) do
+      items when is_list(items) -> {:fan_out, items}
+      nil -> {:error, {:items_undefined, path}}
+      _other -> {:error, {:items_not_a_list, path}}
+    end
   end
 end
 ```
@@ -309,10 +336,14 @@ nothing succeeds over nothing, so no start job goes out and the job answers
 the invocation with `[]` immediately (`sb-ADR-0009` decision 8). All N start
 jobs go out up front - there are no slices, and
 the queue's own concurrency limit is what bounds how many children run at
-once. An author's `max_concurrency` is shape-validated and clamped to that
-limit in both directions; a hint below it is not honoured (ADR-0007 and its
-2026-09-05 Note). A fan-out isolated from a host's other async work gets its
-own queue, which is a deployment change.
+once. A handler may pass a width hint of its own as
+`{:fan_out, items, max_concurrency: n}`, and it is shape-validated and
+clamped to that limit in both directions; a hint below it is not honoured
+(ADR-0007 and its 2026-09-05 Note). `core.map` declares no such field, so
+nothing arrives in `params` to pass along: `max_concurrency` is one of the
+block fields `sb-ADR-0009` decision 4 leaves deferred. A fan-out isolated
+from a host's other async work gets its own queue, which is a deployment
+change.
 
 Two config options belong to this half:
 
