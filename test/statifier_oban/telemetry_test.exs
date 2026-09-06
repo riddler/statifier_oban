@@ -87,11 +87,16 @@ defmodule StatifierOban.TelemetryTest do
 
   # -- the surface itself -------------------------------------------------
 
+  # The three fan-out names are emitted from the seam ADR-0007 owns, so
+  # they are exercised in `StatifierOban.Invoke.FanOutTest`, where that
+  # harness lives; what this test pins is that `events/0` names them, since
+  # the bridge attaches from this list and nothing else.
+  #
   # sabotage: dropped `:discarded` from `@invoke_kinds` - went red here
-  # (10 names, the invoke discard name missing) and, as a side effect, on
+  # (13 names, the invoke discard name missing) and, as a side effect, on
   # the invoke :discarded test, whose event stopped being attachable at
   # all; reverted.
-  test "events/0 enumerates all eleven names, and every one is emitted by this module" do
+  test "events/0 enumerates all fourteen names" do
     assert Telemetry.events() == [
              [:statifier_oban, :timer, :scheduled],
              [:statifier_oban, :timer, :schedule_rejected],
@@ -101,12 +106,15 @@ defmodule StatifierOban.TelemetryTest do
              [:statifier_oban, :invoke, :enqueued],
              [:statifier_oban, :invoke, :enqueue_rejected],
              [:statifier_oban, :invoke, :cancelled],
+             [:statifier_oban, :invoke, :fan_out],
+             [:statifier_oban, :invoke, :child_started],
+             [:statifier_oban, :invoke, :unstarted_cancelled],
              [:statifier_oban, :invoke, :delivered],
              [:statifier_oban, :invoke, :discarded],
              [:statifier_oban, :invoke, :failed]
            ]
 
-    assert length(Telemetry.events()) == 11
+    assert length(Telemetry.events()) == 14
   end
 
   # -- timer scheduling seam ----------------------------------------------

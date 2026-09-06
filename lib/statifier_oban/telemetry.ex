@@ -109,6 +109,36 @@ defmodule StatifierOban.Telemetry do
   `:codec_failed` say the deploy is wrong rather than anything about the
   invocation, and they ride Oban's exception event.
 
+  ## Fan-out seam
+
+  Emitted around ADR-0007's fan-out, and recorded by ADR-0006's
+  2026-09-06 amendment. None of the three is an answer: the fan-out job
+  completes without delivering, a child start creates a run and delivers
+  nothing, and the settlement side answers the invocation once on behalf
+  of all N.
+
+  | Event | Measurements | Metadata |
+  |---|---|---|
+  | `[:statifier_oban, :invoke, :fan_out]` | `system_time`, `count` | `scope`, `invoke_id`, `handler`, `policy`, `queue`, `job_id`, `caller_context` |
+  | `[:statifier_oban, :invoke, :child_started]` | `system_time`, `attempt` | `scope`, `invoke_id`, `index`, `count`, `job_id`, `caller_context` |
+  | `[:statifier_oban, :invoke, :unstarted_cancelled]` | `system_time`, `count` | `scope`, `invoke_id` |
+
+  `count` is the fan-out's width on all three. It is a measurement on
+  `:fan_out` and `:unstarted_cancelled`, where it is the number the call
+  itself produced - the status it already has on the two `:cancelled`
+  events, `0` included - and metadata on `:child_started`, where `index`
+  and `count` together are the child's position rather than a quantity.
+
+  `:unstarted_cancelled`'s count is half of `sb-ADR-0009` decision 6's
+  `first_error` cancel: the indices whose start job never ran. The
+  siblings that already have a child run are the settlement side's to
+  cancel and are not counted here.
+
+  `handler` is on `:fan_out` alone - `ChildStartWorker` never resolves the
+  handler name to a module and `cancel_unstarted/3` is given no handler at
+  all, and a string where every other event carries a module would be
+  worse than the absence.
+
   ## Cardinality
 
   Every metadata key above is bounded by the chart rather than by traffic,
@@ -132,11 +162,21 @@ defmodule StatifierOban.Telemetry do
   @type scope :: String.t()
 
   @timer_kinds [:scheduled, :schedule_rejected, :cancelled, :fired, :discarded]
-  @invoke_kinds [:enqueued, :enqueue_rejected, :cancelled, :delivered, :discarded, :failed]
+  @invoke_kinds [
+    :enqueued,
+    :enqueue_rejected,
+    :cancelled,
+    :fan_out,
+    :child_started,
+    :unstarted_cancelled,
+    :delivered,
+    :discarded,
+    :failed
+  ]
 
   @doc """
   Every event name this module can ever emit - the 5
-  `[:statifier_oban, :timer, kind]` names and the 6
+  `[:statifier_oban, :timer, kind]` names and the 9
   `[:statifier_oban, :invoke, kind]` names, built from `@timer_kinds` and
   `@invoke_kinds`, this module's single definition site for the
   vocabulary.
@@ -258,6 +298,90 @@ defmodule StatifierOban.Telemetry do
       [:statifier_oban, :invoke, :cancelled],
       %{system_time: System.system_time(), count: count},
       %{scope: scope, invoke_id: invoke_id, handler: handler}
+    )
+  end
+
+  # -- fan-out seam
+
+  @doc """
+  Emits `[:statifier_oban, :invoke, :fan_out]` - one invocation became
+  `count` durable child starts rather than an answer, and every start is
+  stored.
+
+  `policy` and `queue` are `StatifierOban.Invoke.FanOut.start/5`'s own -
+  the aggregation the children were actually enqueued under, and the queue
+  they went to - rather than a second reading of the invocation.
+  """
+  @spec invoke_fan_out(
+          scope(),
+          module(),
+          Invoke.t(),
+          non_neg_integer(),
+          atom(),
+          atom() | String.t(),
+          Oban.Job.t()
+        ) :: :ok
+  def invoke_fan_out(scope, handler, %Invoke{} = invoke, count, policy, queue, %Oban.Job{} = job) do
+    :telemetry.execute(
+      [:statifier_oban, :invoke, :fan_out],
+      %{system_time: System.system_time(), count: count},
+      %{
+        scope: scope,
+        invoke_id: invoke.invoke_id,
+        handler: handler,
+        policy: policy,
+        queue: queue,
+        job_id: job.id,
+        caller_context: invoke.caller_context
+      }
+    )
+  end
+
+  @doc """
+  Emits `[:statifier_oban, :invoke, :child_started]` - the host's
+  `c:StatifierOban.Invoke.ChildStarter.start_child/5` seam created the
+  child at `index` of `count`.
+
+  A child start is not an answer (ADR-0007): nothing was delivered into
+  the run. `index` and `count` are the child's position and ride as
+  metadata; `attempt` is the start job's own, so a child created on a
+  retry is distinguishable from one created first time.
+  """
+  @spec invoke_child_started(
+          scope(),
+          Invoke.t(),
+          non_neg_integer(),
+          pos_integer(),
+          Oban.Job.t()
+        ) :: :ok
+  def invoke_child_started(scope, %Invoke{} = invoke, index, count, %Oban.Job{} = job) do
+    :telemetry.execute(
+      [:statifier_oban, :invoke, :child_started],
+      %{system_time: System.system_time(), attempt: job.attempt},
+      %{
+        scope: scope,
+        invoke_id: invoke.invoke_id,
+        index: index,
+        count: count,
+        job_id: job.id,
+        caller_context: invoke.caller_context
+      }
+    )
+  end
+
+  @doc """
+  Emits `[:statifier_oban, :invoke, :unstarted_cancelled]` - the unstarted
+  half of `sb-ADR-0009` decision 6's `first_error` cancel ran and
+  cancelled `count` start jobs. `count: 0` is a no-op, not an error, and
+  the siblings that already have a child run are cancelled by the
+  settlement side and are not counted here.
+  """
+  @spec invoke_unstarted_cancelled(scope(), String.t(), non_neg_integer()) :: :ok
+  def invoke_unstarted_cancelled(scope, invoke_id, count) do
+    :telemetry.execute(
+      [:statifier_oban, :invoke, :unstarted_cancelled],
+      %{system_time: System.system_time(), count: count},
+      %{scope: scope, invoke_id: invoke_id}
     )
   end
 

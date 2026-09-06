@@ -1,7 +1,7 @@
 # Telemetry and the OpenTelemetry bridge half
 
 This note is the design record for what `statifier_oban` emits and what it
-deliberately leaves to others. The eleven events below are implemented in
+deliberately leaves to others. The fourteen events below are implemented in
 `StatifierOban.Telemetry` (sob-kmw), which owns every event name and is the
 only module here that calls `:telemetry.execute/3`. This note and
 `docs/adr/0006-telemetry-events-for-the-durable-seams.md` are the contract it
@@ -224,6 +224,63 @@ Where the seam delivers nothing, this emits nothing. The environment errors
 say the deploy is wrong rather than anything about the invocation, and
 ADR-0005 already records that limit; they ride Oban's exception event.
 
+### Fan-out seam
+
+Emitted around the fan-out ADR-0007 defines: one `core.map`-shaped invocation
+becomes one fan-out job, N child start jobs under it, and - under `first_error`
+- a cancel of the starts that have not run. **None of these three is an
+answer.** The fan-out job completes without delivering, a child start creates a
+run and delivers nothing, and the invocation is answered once by the settlement
+side on behalf of all N. `ADR-0006`'s 2026-09-06 amendment records why each one
+is here.
+
+| Event | Emitted from | Measurements | Metadata |
+|---|---|---|---|
+| `[:statifier_oban, :invoke, :fan_out]` | `Invoke.Worker`'s fan-out arm, after every start is enqueued | `system_time`, `count` | `scope`, `invoke_id`, `handler`, `policy`, `queue`, `job_id`, `caller_context` |
+| `[:statifier_oban, :invoke, :child_started]` | `Invoke.ChildStartWorker.perform/1`, after the `ChildStarter` seam returns `:ok` | `system_time`, `attempt` | `scope`, `invoke_id`, `index`, `count`, `job_id`, `caller_context` |
+| `[:statifier_oban, :invoke, :unstarted_cancelled]` | `Invoke.FanOut.cancel_unstarted/3`, after the sweep | `system_time`, `count` | `scope`, `invoke_id` |
+
+`count` is the fan-out's width on all three, read three different ways: on
+`:fan_out` it is how many starts were stored, on `:child_started` it is how many
+siblings this child is one of, and on `:unstarted_cancelled` it is how many of
+them the sweep reached. On the first and third it is a **measurement**, the
+number the call itself produced, exactly as on the two `:cancelled` events, and
+`0` is data there for the same reason: a `first_error` fan-out whose children
+have all already started cancels nothing and is not an error. On
+`:child_started` it is **metadata**, because there `index` and `count` together
+are the child's position rather than a quantity that event produced - the same
+status `ordinal` has on every timer event.
+
+**Under `first_error`, `:unstarted_cancelled`'s `count` is only half the
+cancel.** `sb-ADR-0009` decision 6 cancels a failed fan-out's siblings through
+two doors, and this one reaches only the indices whose start job has not run
+yet. The siblings that already have a child run are cancelled by the settlement
+side walking those runs, which is not this package's event to emit. A consumer
+adding the two halves gets the number of cancelled entries the run's datamodel
+holds; reading this one alone and expecting that total is the mistake the split
+invites.
+
+`policy` is `:all` or `:first_error`, read off the invocation's `on` parameter
+by the same call that enqueued the starts under it - it is what the children
+were actually started with, not a re-reading. An invocation naming no `on` is
+`:all`, and an unrecognised one never reaches this event: it is refused before
+the first child start and rides `[:statifier_oban, :invoke, :failed]`.
+
+`attempt` on `:child_started` is the start job's own, exactly as on `:fired` and
+`:delivered`: a child that was created on the third attempt is a different fact
+from one created on the first, and a seam error in between is Oban's
+`[:oban, :job, :exception]`, not a name here.
+
+`handler` is on `:fan_out` alone. `ChildStartWorker` reads the handler *name*
+off the row and never resolves it to a module, and `cancel_unstarted/3` is given
+a scope and an invoke id and nothing else; putting a string where every other
+event's `handler` is a module would be worse than the absence. The module is
+already on `:enqueued` and on `:fan_out`, both under the same `invoke_id`.
+
+`index` is bounded by the deployment's `:max_fan_out`, and it is a **position,
+not a metric dimension**: folding it into a label gives one series per child of
+every fan-out.
+
 ### What is deliberately absent
 
 - **No event for a retry, a snooze, an exception, a queue wait, or a job
@@ -310,6 +367,16 @@ What the events are built to let the bridge do:
   trace through `caller_context` (`ots-ADR-0004` decisions 5 and 8).
   Correlation back to the run is by the `statifier.session_id` attribute
   rather than by nesting.
+
+- **The fan-out events are what makes a fan-out's children reachable.**
+  `[:statifier_oban, :invoke, :fan_out]` is the one event that says an
+  invocation became N durable rows rather than an answer, and
+  `[:statifier_oban, :invoke, :child_started]` is the per-child event the
+  bridge opens a linked root on, so a child run's own spans have a root to
+  nest under and the arming trace is reached by the same `caller_context`
+  link the delivery-seam events use. Without them a fan-out is a gap: the
+  fan-out job's `[:oban, :job, :stop]` says a job finished and nothing says
+  what it stored, and every child appears as an unrelated run.
 
 - **The scheduling trace is reached by a link, never by parenthood.** A timer
   that fires three days after it was armed does not belong inside the request

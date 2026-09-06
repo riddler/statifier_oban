@@ -235,7 +235,8 @@ defmodule StatifierOban.Invoke.Worker do
         ) :: :ok | {:cancel, term()} | {:error, term()}
   defp fan_out(job, delivery, scope, handler, invoke, items, opts) do
     case FanOut.start(handler.config(), job.args, invoke, items, opts) do
-      :ok ->
+      {:ok, %{count: count, policy: policy, queue: queue}} ->
+        Telemetry.invoke_fan_out(scope, handler, invoke, count, policy, queue, job)
         :ok
 
       {:empty, collected} ->

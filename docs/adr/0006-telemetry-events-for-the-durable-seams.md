@@ -235,3 +235,131 @@ that a retry rewrites `scheduled_at`. `docs/telemetry.md` has been given the
 matching one-word precision in the same change; no event, measurement, or
 metadata key in this record changes, so this is a precision Note rather than
 an amendment under decision 4.
+
+## Amendment (2026-09-06, sob-28m): the fan-out seam mints three events
+
+Status: proposed (2026-09-06, sob-28m)
+
+Decision 2 above scopes the contract to two seams and counts the result:
+
+> Eleven events, listed with their measurements and metadata in
+> `docs/telemetry.md`.
+
+There is a third durable seam it does not name, because it did not exist when
+this record was written. ADR-0007 added the fan-out: a `core.map`-shaped
+invocation becomes one fan-out job, N child start jobs under it, and - under
+`first_error` - a cancel of the starts that have not run. Its decision 9
+deliberately minted no event name, and left the question to "the campaign that
+implements it, against working code". The code now exists, and this amendment
+is that answer.
+
+Each of the three is a durable write or a durable verdict this package makes
+and nothing else reports:
+
+- the fan-out arm of `StatifierOban.Invoke.Worker` completes **without
+  delivering** (ADR-0007), so `[:statifier_oban, :invoke, :delivered]` never
+  fires for it. The largest thing this package does for an invocation - storing
+  N rows - is the one thing its event stream is silent about;
+- `StatifierOban.Invoke.ChildStartWorker` runs later, usually on another node,
+  and emits nothing, so the bridge has no per-child event to open a linked root
+  on and a child run's own spans have nothing to nest under;
+- `StatifierOban.Invoke.FanOut.cancel_unstarted/3` cancels the unstarted half of
+  `sb-ADR-0009` decision 6's `first_error` sweep and emits nothing, so a trace
+  reports no cancelled siblings at all while the run's datamodel holds one
+  cancelled entry per cancelled index. The two numbers disagree, and only one of
+  them is wrong.
+
+**This record therefore adds three event names, and decision 2's count moves
+from eleven to fourteen.** Adding a name is additive under decision 4's
+discipline - nothing is renamed, nothing is removed, no existing event changes
+its measurements or its metadata - so it is an amendment rather than a successor
+record, and `StatifierOban.Telemetry.events/0` remains the single enumerable
+definition site the bridge attaches from.
+
+| Event | Emitted from | Measurements | Metadata |
+|---|---|---|---|
+| `[:statifier_oban, :invoke, :fan_out]` | `Invoke.Worker`'s fan-out arm, after every start is enqueued | `system_time`, `count` | `scope`, `invoke_id`, `handler`, `policy`, `queue`, `job_id`, `caller_context` |
+| `[:statifier_oban, :invoke, :child_started]` | `Invoke.ChildStartWorker.perform/1`, after the `ChildStarter` seam returns `:ok` | `system_time`, `attempt` | `scope`, `invoke_id`, `index`, `count`, `job_id`, `caller_context` |
+| `[:statifier_oban, :invoke, :unstarted_cancelled]` | `Invoke.FanOut.cancel_unstarted/3`, after the sweep | `system_time`, `count` | `scope`, `invoke_id` |
+
+**They are `:invoke` events, not a fourth `[:statifier_oban, :fan_out, ...]`
+family.** Decision 3 fixes the prefix at two segments and leaves the third to
+name the kind; a fan-out is one invocation, answered once, and splitting its
+events across two families would make a bridge attach twice and correlate what
+it already had under one `invoke_id`.
+
+**`count` is a measurement on two of them and metadata on the third, and the
+split is decision 4's, not an inconsistency.** On `:fan_out` and
+`:unstarted_cancelled` the count is the number the call itself produced - N
+starts enqueued, N starts cancelled - which is exactly the status `count` has on
+`[:statifier_oban, :timer, :cancelled]` and `[:statifier_oban, :invoke,
+:cancelled]` today, and `0` is data there for the same reason. On
+`:child_started` the pair `index` and `count` is the child's **position** in its
+fan-out rather than a quantity that event produced, and decision 4 adopts
+upstream's convention of carrying integer-valued positions as metadata -
+`ordinal` already rides that way on every timer event.
+
+**`handler` is on `:fan_out` alone.** Not out of thrift: neither of the other
+two has one to report. `ChildStartWorker` reads the handler *name* off the job
+row and never resolves it to a module - resolution is the answering worker's,
+and a start job has no reason to load it - and `cancel_unstarted/3` takes a
+scope and an invoke id and nothing else. Putting a string where every other
+event's `handler` is a module would be worse than the absence. The bridge
+already has the module from `[:statifier_oban, :invoke, :enqueued]` and from
+`:fan_out`, both keyed by the same `invoke_id`.
+
+**`:child_started` is delivery-shaped though it delivers nothing.** It is
+emitted inside the job, on the node that ran it, and carries the job's own
+`attempt` exactly as `:fired` and `:delivered` do - a start that succeeded on
+its third attempt is a different fact from one that succeeded on its first. What
+it is not is an answer: ADR-0007 is explicit that a child start never delivers
+into the run, and this event does not make it look as though it did. It carries
+`caller_context` for decision 7's reason and no other: it is what lets the
+bridge open a **linked** root per child, so the child's own creation is reachable
+from the trace that armed the fan-out without hanging under it for the fan-out's
+whole life.
+
+**Decision 9 holds unchanged.** Nothing host-opaque reaches these events. The
+handler's `items` list is never read here - `count` is its length and `index` is
+a position in it - `policy` is the two-word vocabulary `:all | :first_error`
+read off the invocation's `on` parameter, and the effect's `data`, `params` and
+`content` are as absent as they are everywhere else in this contract.
+
+**Cardinality.** `count` and `index` are bounded by `StatifierOban.Config`'s
+`:max_fan_out` (ADR-0007's second Note), which is a deployment's number rather
+than traffic; `policy` has two values. `index` is nonetheless a **position, not
+a dimension**: a host that folds it into a metric label gets one series per
+child of every fan-out, which is precisely the unboundedness the rest of this
+contract avoids. `job_id` and `caller_context` keep the status the Cardinality
+section already gives them.
+
+**Still deliberately absent.** A child *settling* is not this package's fact -
+the settlement side owns it, and `sb-ADR-0009` decision 6 is where its
+vocabulary lives. A start job's `{:error, _}` retry is Oban's
+`[:oban, :job, :exception]`, under decision 2's rule that retries are not
+re-emitted. A fan-out **refused** before it starts already fires
+`[:statifier_oban, :invoke, :failed]` with the `"fan_out_refused"` reason
+ADR-0005's 2026-09-05 Note added, so no fourth name is needed for it; an empty
+fan-out answers through the ordinary done door and fires `:delivered`, per
+ADR-0005's 2026-09-06 Note. In both cases the existing event is the right one
+and a second would double-count.
+
+**How `:fan_out` gets its numbers.** `count`, `policy` and `queue` are all
+decided inside `StatifierOban.Invoke.FanOut.start/5` - the cap is applied there,
+the `on` parameter is read there, the queue comes off the config there - while
+`job_id` and `caller_context` exist only on the worker, which is where decision
+2's seam rule puts the emission. Re-deriving the first three at the call site
+would mean reading the `on` parameter a second time, and a second reading is a
+second thing that can drift from the policy the child jobs were actually
+enqueued under. So `start/5`'s success return carries them instead: `:ok` becomes
+`{:ok, %{count: n, policy: p, queue: q}}`. That is a breaking change to one
+public return in a 0.x minor, and it is recorded here because this event is its
+only cause. `{:empty, []}`, `{:refused, _}` and `{:error, _}` are untouched, and
+ADR-0005's Note naming `{:empty, []}` still reads true.
+
+**Reopen trigger.** A fan-out whose children are scheduled in slices rather
+than all up front - ADR-0007 decision 2's batching, which the shipped code does
+not do - would make "the fan-out was dispatched" a repeated fact rather than a
+single one, and `:fan_out` would need either an occurrence per slice or a
+companion name. Nothing here anticipates that shape; the campaign that ships it
+amends this table again.
