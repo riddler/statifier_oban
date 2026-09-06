@@ -1,6 +1,6 @@
 # ADR-0006: Telemetry events for the durable seams
 
-Status: accepted (2026-09-01, sob-43q; unqualified direction-agent verdict, campaign-025)
+Status: accepted (2026-09-01, sob-43q; unqualified direction-agent verdict, campaign-025) - amended 2026-09-06 (sob-28m, PR 72: the fan-out seam mints three events, count eleven to fourteen)
 
 ## Context
 
@@ -238,7 +238,7 @@ an amendment under decision 4.
 
 ## Amendment (2026-09-06): the fan-out seam mints three events
 
-Status: proposed (2026-09-06, sob-28m)
+Status: accepted (2026-09-06, sob-28m; see the Note below)
 
 Decision 2 above scopes the contract to two seams and counts the result:
 
@@ -364,3 +364,31 @@ not do - would make "the fan-out was dispatched" a repeated fact rather than a
 single one, and `:fan_out` would need either an occurrence per slice or a
 companion name. Nothing here anticipates that shape; the campaign that ships it
 amends this table again.
+
+## Note (2026-09-06): the amendment above is accepted
+
+The fan-out amendment merged at `proposed` in PR 72, rebased onto main as
+`3652db8` and `c9046ed`, because a status claim cannot precede the verdict
+that justifies it. This Note records that verdict and the flip, taken by
+the separate gated PR consent clause 11 asks a flip to take.
+
+The direction review ran two cold passes. Pass 1 returned QUALIFIED with
+three findings, all record-prose and none blocking; the cure `d1c7f38`
+answered them in-branch; the scope-frozen pass 2, a fresh cold agent,
+returned UNQUALIFIED with zero findings.
+
+Every claim the amendment makes was re-verified against `main` at
+`c9046ed` before this flip, not against the code as it stood when the
+amendment was written: `StatifierOban.Telemetry` defines the three names
+with exactly the measurements and metadata the amendment's table gives
+them; `events/0` returns fourteen names, five `:timer` and nine
+`:invoke`; the three emission sites are the ones the table names
+(`Invoke.Worker`'s fan-out arm, `Invoke.ChildStartWorker.perform/1` after
+the `ChildStarter` seam returns, and `Invoke.FanOut.cancel_unstarted/3`
+after the sweep); `FanOut.start/5` returns `{:ok, %{count: n, policy: p,
+queue: q}}` on success with `{:empty, []}`, `{:refused, _}` and
+`{:error, _}` untouched; and `docs/telemetry.md` carries the matching
+fan-out section and its own count of fourteen. Nothing above moves.
+
+The head Status line gains the `- amended 2026-09-06 (...)` suffix in the
+same change, in the shape ADR-0005's head line already carries.
