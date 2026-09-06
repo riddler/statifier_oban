@@ -244,16 +244,41 @@ defmodule StatifierOban.Invoke.FanOutTest do
     assert refusal == %{reason: :invalid_items}
   end
 
-  # The empty fan-out has no child whose settlement could answer it, and
-  # answering it here would mint an answer that is the settlement side's
-  # to mint. Refusing is the option that neither hangs nor invents.
+  # `sb-ADR-0009` decision 8: an empty `items` list is a successful
+  # fan-out over nothing. Nothing is enqueued and the accumulated list -
+  # which for N = 0 is the whole of it - comes back for the caller to
+  # answer with.
   #
-  # sabotage: `counted/2`'s zero clause returned `{:ok, 1}` - went red
-  # (the empty fan-out enqueued a start job for an item that does not
-  # exist instead of refusing), reverted.
-  test "an empty fan-out is refused rather than left unanswerable" do
-    assert {:refused, %{reason: :empty_items}} =
+  # sabotage: `enqueue_all/6`'s zero clause was removed so the count fell
+  # through to the insert loop - went red (`JobArgs.for_child_start/4`'s
+  # `index < count` guard raised on index 0, a start job for an item that
+  # does not exist), reverted.
+  test "an empty fan-out succeeds over nothing rather than being refused" do
+    assert {:empty, []} =
              FanOut.start(config(), args_for("s", "i", FanOutHandler), invoke_for("i"), [], [])
+  end
+
+  # The runtime half of the same ruling, end to end: the conformance case
+  # for N = 0. The job succeeds rather than cancelling, no start job
+  # exists for the invocation, and the chart hears `done.invoke` carrying
+  # the empty list - the same door and the same shape the settlement side
+  # answers through for N > 0, where the payload is the dense
+  # index-ordered list of N answers.
+  #
+  # sabotage: `Worker`'s `{:empty, collected}` arm was dropped - went red
+  # (the fan-out arm's `case` matched nothing and the job failed instead
+  # of succeeding, so the chart heard nothing at all). Separately,
+  # delivering `nil` instead of `collected` also went red (the chart was
+  # answered with no list). Both reverted.
+  test "an empty fan-out starts no children and answers the invocation with the empty list" do
+    insert_fan_out!("sess_fo_empty", "inv_empty", [])
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+
+    assert [] == start_jobs("sess_fo_empty", "inv_empty")
+
+    assert_received {:delivered, "inv_empty", []}
+    refute_received {:started, _parent, "inv_empty", _index, _count, _opts}
   end
 
   # -- max_concurrency: clamped, never honoured below the queue (R31-11) ---

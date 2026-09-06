@@ -200,7 +200,10 @@ defmodule StatifierOban.Invoke.Handler do
 
   A handler returning this delivers no `done.invoke`: the invocation
   stays open until the settlement side answers it once, on behalf of
-  all N. A fan-out refused before any child starts - over
+  all N. An **empty** `items` list is the one exception - a fan-out over
+  nothing succeeds over nothing (`sb-ADR-0009` decision 8), so no child
+  starts and the invocation is answered immediately with `[]`. A fan-out
+  refused before any child starts - over
   `:max_fan_out`, or not a list - fails the invocation on
   `error.communication.invoke.<invoke_id>` instead (ADR-0007 decision
   8).
