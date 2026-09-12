@@ -109,9 +109,10 @@ as written: the host supplies its own named Oban instance, and this repo's
 suite runs against the Lite engine.
 
 The rename reaches no callback shape and no stored byte. The scope a host
-answers liveness for is still the plain string the job row carries, documented
-on `StatifierOban.Timer.Key`'s `scope` typedoc and unchanged by `sob-mh3`
-(`lib/statifier_oban/timer/key.ex`, read at `2ffc3b7`); the delivery seam this
+answers liveness for is still the plain string the job row carries, described
+in `StatifierOban.Timer.Key`'s `@moduledoc` and typed there as `t:scope/0`,
+both unchanged by `sob-mh3` (`lib/statifier_oban/timer/key.ex`, read at
+`2ffc3b7`); the delivery seam this
 Note's harness implements is `StatifierOban.Timer.Delivery`, whose
 `c:deliver/2` and `t:discard_reason/0` are untouched
 (`lib/statifier_oban/timer/delivery.ex`, read at `2ffc3b7`).

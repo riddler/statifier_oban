@@ -67,8 +67,7 @@ whole contract.
    Metadata that names them directly is what keeps the bridge a translator.
 
 3. **The verdicts that are successes for Oban and non-events for the
-   chart.** A fired timer whose execution is no longer live is *discarded*
-   per
+   chart.** A fired timer whose execution is no longer live is *discarded* per
    spec 6.2: the delivery seam returns `{:discarded, reason}`, the worker
    returns `{:cancel, {:discarded, reason}}`, and Oban reports
    `[:oban, :job, :stop]` with `state: :cancelled` - a *stop*, not an
@@ -76,9 +75,9 @@ whole contract.
    is a job that asked to be cancelled. From the chart's side it is the
    spec-mandated drop of an event nobody will ever see, and it is the single
    most useful thing in this package to be able to count. The same holds for
-   a completed invocation delivered into a dead execution, for the spec 6.3
-   and 6.4.3 cancellation sweeps (whose `count` is legitimately `0`), and
-   for a permanently failed invocation.
+   a completed invocation delivered into a dead execution, for the spec 6.3 and
+   6.4.3 cancellation sweeps (whose `count` is legitimately `0`), and for a
+   permanently failed invocation.
 
 Everything else - duration, attempts, retries, queue latency, exceptions,
 snoozes - is Oban's, and this package emits nothing for it.
@@ -133,9 +132,8 @@ snoozes - is Oban's, and this package emits nothing for it.
   is explicit that the scope is `ctx.session_id` for a live session *or the
   host's own durable execution id* for a process-less host, and calling an
   execution id `session_id` in the metadata would be a lie on exactly the
-  hosts this package exists for. The correspondence is nonetheless
-  one-to-one where
-  both exist, and the bridge maps `scope` onto `statifier.session_id` for
+  hosts this package exists for. The correspondence is nonetheless one-to-one
+  where both exist, and the bridge maps `scope` onto `statifier.session_id` for
   correlation - see "The bridge half".
 - **`driver` has no analogue.** `st-ADR-0067` decision 4 puts a `driver`
   atom on every upstream event because several drivers emit the same events.
@@ -208,9 +206,8 @@ the row for anyone to recover.
 `reason` on the two `:discarded` events is the delivery seam's
 `t:discard_reason/0` - `:terminated` for no live execution, or the halted
 execution's own status (`:done`, `:cancelled`, `:budget_exhausted`), or
-whatever a host's own execution store calls the not-live case. This is the
-spec 6.2 verdict as data, and
-it is the value Oban buries inside `:result`.
+whatever a host's own execution store calls the not-live case. This is the spec
+6.2 verdict as data, and it is the value Oban buries inside `:result`.
 
 `[:statifier_oban, :invoke, :failed]` mirrors
 `c:StatifierOban.Invoke.Delivery.deliver_failure/3` exactly, including the
@@ -260,9 +257,8 @@ two doors, and this one reaches only the indices whose start job has not run
 yet. The siblings that already have a child execution are cancelled by the
 settlement side walking those executions, which is not this package's event
 to emit. A consumer adding the two halves gets the number of cancelled
-entries the execution's datamodel holds; reading this one alone and
-expecting that total is the mistake the split
-invites.
+entries the execution's datamodel holds; reading this one alone and expecting
+that total is the mistake the split invites.
 
 `policy` is `:all` or `:first_error`, read off the invocation's `on` parameter
 by the same call that enqueued the starts under it - it is what the children
@@ -359,9 +355,8 @@ What the events are built to let the bridge do:
   context, and `ots-ADR-0004` decision 4 makes its own table the whole of the
   nesting mechanism. Decision 6 adds the pid check - a `scope`'s macrostep
   span is used only when the bridge's row for that scope names this very
-  process - so a `scope` that is a host's durable execution id matches
-  nothing and the event becomes its own span instead. No propagation
-  machinery is
+  process - so a `scope` that is a host's durable execution id matches nothing
+  and the event becomes its own span instead. No propagation machinery is
   involved either way.
 
 - **Delivery-seam events are detached roots carrying a link, not spans inside
@@ -371,17 +366,15 @@ What the events are built to let the bridge do:
   `opentelemetry_oban` has open in that same process does not parent them
   either. Each becomes its own zero-duration root span, linked to the arming
   trace through `caller_context` (`ots-ADR-0004` decisions 5 and 8).
-  Correlation back to the execution is by the `statifier.session_id`
-  attribute
+  Correlation back to the execution is by the `statifier.session_id` attribute
   rather than by nesting.
 
 - **The fan-out events are what makes a fan-out's children reachable.**
   `[:statifier_oban, :invoke, :fan_out]` is the one event that says an
   invocation became N durable rows rather than an answer, and
   `[:statifier_oban, :invoke, :child_started]` is the per-child event the
-  bridge opens a linked root on, so a child execution's own spans have a
-  root to nest under and the arming trace is reached by the same
-  `caller_context`
+  bridge opens a linked root on, so a child execution's own spans have a root
+  to nest under and the arming trace is reached by the same `caller_context`
   link the delivery-seam events use. Without them a fan-out is a gap: the
   fan-out job's `[:oban, :job, :stop]` says a job finished and nothing says
   what it stored, and every child appears as an unrelated execution.
@@ -474,9 +467,8 @@ unlinked, while `scope` and `invoke_id` still name the invocation.
 
 A durable invocation is where the row's copy earns its keep over the
 session's. An execution resumed after a node death rebuilds its invocation
-table from the persisted position, where `caller_context` is an optional
-entry key;
-the Oban row survives that death intact either way, so a process-less host
+table from the persisted position, where `caller_context` is an optional entry
+key; the Oban row survives that death intact either way, so a process-less host
 answering from the row links the completion even when nothing else remembers
 the arming trace.
 
