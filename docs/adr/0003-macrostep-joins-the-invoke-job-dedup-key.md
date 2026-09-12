@@ -110,3 +110,33 @@ this key can migrate by a superseding ADR.
   cannot tell from the new generation's - the delivery seam's liveness
   check knows runs, not generations. Both are raised upstream rather
   than decided here.
+
+## Note (2026-09-12): the dedup key is untouched by the execution rename
+
+`statifier_persistence` ADR-0011 (proposed, campaign SF041) renames the
+family's durable record from a "run" to an **execution**. This package's prose
+follows in `sob-mh3`; this record's Decision does not move, and neither does a
+single stored byte.
+
+The key option B fixes is `{scope, invoke_id, macrostep}`, and `scope` is a
+plain string the caller supplies - never a run id, whatever a host packs into
+it. So the rename reaches no job arg and no unique key:
+`StatifierOban.Invoke.JobArgs.from_invoke/4` still writes `"scope"` into the
+arg map and `to_invoke/1` still reads it back with
+`fetch_binary(args, "scope")` (`lib/statifier_oban/invoke/job_args.ex`, read
+at `2ffc3b7`). Rows enqueued before this change and rows enqueued after it
+dedup against each other exactly as before, and cancellation still matches
+`{scope, invoke_id}`.
+
+Two readings above change word only. Option A's "the packed scope must be
+unpacked before the run-liveness check" reads *execution-liveness*, which is
+what `lib/statifier_oban/timer.ex` and `lib/statifier_oban/config.ex` now call
+it. The Consequences' "the delivery seam's liveness check knows runs, not
+generations" reads *executions*; the boundary it draws is unchanged.
+
+One string above stays exactly as written: the Context's `run_id#macrostep` is
+a quotation of the *host's own* packed scope as it stood when this record was
+taken, not this package's vocabulary, and a quotation is not renamed.
+
+`ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
+no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).

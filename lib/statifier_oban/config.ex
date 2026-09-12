@@ -25,13 +25,14 @@ defmodule StatifierOban.Config do
   fallback queue.
 
   The delivery seams are the options with defaults, and each default is a
-  documented choice rather than a fallback: `:delivery` (the run-liveness
-  seam fired timers go through, `StatifierOban.Timer.Delivery`) and
+  documented choice rather than a fallback: `:delivery` (the
+  execution-liveness seam fired timers go through,
+  `StatifierOban.Timer.Delivery`) and
   `:invoke_delivery` (the seam a completed invoke's `done.invoke` goes
   through, `StatifierOban.Invoke.Delivery`) both default to their
   `Statifier.Session`-backed check, which is correct for any host running
   sessions with the session id as scope. A host answering liveness from
-  its own run store supplies its implementations here.
+  its own execution store supplies its implementations here.
 
   ## Examples
 
@@ -96,9 +97,9 @@ defmodule StatifierOban.Config do
   and defaults to `nil`, because a host with no `core.map` in any of its
   charts has no children to start - and it has no default module either,
   for the reason `:invoke_queue` has none: this package does not create
-  runs, so there is nothing here to fall back to. A fan-out on a config
-  without one is refused on the invocation's error route rather than
-  starting nothing silently.
+  executions, so there is nothing here to fall back to. A fan-out on a
+  config without one is refused on the invocation's error route rather
+  than starting nothing silently.
 
   `:max_fan_out` is the runtime cap ADR-0007 decision 8 sends to the
   host, given a number here at last: a positive integer, defaulting to

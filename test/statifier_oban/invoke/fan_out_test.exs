@@ -19,10 +19,10 @@ defmodule StatifierOban.Invoke.FanOutTest do
     @behaviour StatifierOban.Invoke.ChildStarter
 
     @impl StatifierOban.Invoke.ChildStarter
-    def start_child(parent_run_id, invoke, index, count, opts) do
+    def start_child(parent_execution_id, invoke, index, count, opts) do
       send(
         :invoke_fan_out_listener,
-        {:started, parent_run_id, invoke.invoke_id, index, count, opts}
+        {:started, parent_execution_id, invoke.invoke_id, index, count, opts}
       )
 
       :ok
@@ -85,8 +85,8 @@ defmodule StatifierOban.Invoke.FanOutTest do
     @behaviour StatifierOban.Invoke.ChildStarter
 
     @impl StatifierOban.Invoke.ChildStarter
-    def start_child(_parent_run_id, _invoke, _index, _count, _opts),
-      do: {:error, :run_store_down}
+    def start_child(_parent_execution_id, _invoke, _index, _count, _opts),
+      do: {:error, :execution_store_down}
   end
 
   defmodule FailingStarterHandler do
