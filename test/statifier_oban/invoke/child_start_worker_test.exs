@@ -12,6 +12,13 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
   @oban_name StatifierOban.Invoke.ChildStartWorkerTestOban
   @queue "invoke_child_start_test"
 
+  # The two starters in this file deliberately keep `parent_run_id`, the
+  # name `c:StatifierOban.Invoke.ChildStarter.start_child/5`'s first
+  # argument carried before sob-mh3 renamed it to `parent_execution_id`.
+  # The callback argument is positional, so a host implementation written
+  # against the old spelling compiles and behaves unchanged - these
+  # modules are that guarantee under test, and the fan-out test's
+  # starters use the new spelling.
   defmodule OkStarter do
     @moduledoc false
     @behaviour StatifierOban.Invoke.ChildStarter

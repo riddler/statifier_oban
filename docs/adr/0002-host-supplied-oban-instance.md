@@ -92,3 +92,29 @@ is narrower and worth having anyway - the behaviors this package relies on
 (insert, uniqueness, draining, cancellation, and a fired job delivering
 into a run reconstructed from storage) hold on Lite outside this repo's own
 suite as well as inside it.
+
+## Note (2026-09-12): the durable record this record calls a "run" is an execution
+
+`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+record a chart's progress is persisted against an **execution**, retiring
+"run" as the family's word for it. This package's prose moved to that word in
+`sob-mh3`. This record did not: nothing above moves, and nothing observable
+changes.
+
+Two readings shift in word only. Where the Note of 2026-08-31 says the
+downstream host's harness answers liveness "from the stored run", and where it
+lists "a fired job delivering into a run reconstructed from storage", read
+*execution* - the same durable record under its new name. The Decision stands
+as written: the host supplies its own named Oban instance, and this repo's
+suite runs against the Lite engine.
+
+The rename reaches no callback shape and no stored byte. The scope a host
+answers liveness for is still the plain string the job row carries, documented
+on `StatifierOban.Timer.Key`'s `scope` typedoc and unchanged by `sob-mh3`
+(`lib/statifier_oban/timer/key.ex`, read at `2ffc3b7`); the delivery seam this
+Note's harness implements is `StatifierOban.Timer.Delivery`, whose
+`c:deliver/2` and `t:discard_reason/0` are untouched
+(`lib/statifier_oban/timer/delivery.ex`, read at `2ffc3b7`).
+
+`ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
+no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).

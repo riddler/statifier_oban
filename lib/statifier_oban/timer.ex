@@ -9,8 +9,9 @@ defmodule StatifierOban.Timer do
   hands it here with the session scope and its `StatifierOban.Config`.
   When the job fires, `StatifierOban.Timer.Worker` feeds the event back
   through the config's `StatifierOban.Timer.Delivery` module, behind the
-  mandatory run-liveness check (st-ADR-0054 decision 4) - the delivery
-  module travels on the job's meta, so it is fixed at schedule time.
+  mandatory execution-liveness check (st-ADR-0054 decision 4) - the
+  delivery module travels on the job's meta, so it is fixed at schedule
+  time.
 
   Two contract rules from statifier-ex are enforced at this door:
 
@@ -49,8 +50,8 @@ defmodule StatifierOban.Timer do
   Schedules one `%SendDelayed{}` as one Oban job, unique per dedup key.
 
   `scope` follows `StatifierOban.Timer.Key`: `ctx.session_id` for a live
-  session, or the host's own durable run id for a process-less host -
-  always the caller's to supply, never derived.
+  session, or the host's own durable execution id for a process-less
+  host - always the caller's to supply, never derived.
 
   Inserting the same scope and effect again returns `{:ok, job}` with
   `job.conflict?` set and leaves exactly one stored job: the at-least-once
@@ -126,8 +127,8 @@ defmodule StatifierOban.Timer do
   reason: the timer has fired, and a cancel that arrives after the fire
   loses the race. That is
   spec-faithful - a real-time `<cancel>` can lose to a timer that already
-  fired - and the run-liveness check the delivery seam owes (st-ADR-0054
-  decision 4) is the guard on that side, not this one.
+  fired - and the execution-liveness check the delivery seam owes
+  (st-ADR-0054 decision 4) is the guard on that side, not this one.
 
   Leaving `executing` out is what makes the common self-cancel safe.
   A fired timer's delivery routinely drives the chart out of the state
@@ -136,9 +137,9 @@ defmodule StatifierOban.Timer do
   job. Sweeping `executing` here would have `Oban.cancel_all_jobs/2`
   signal a `:pkill` at the delivery's own process and kill the step
   mid-flight, leaving the row `cancelled` with `{:cancel, :shutdown}` and
-  the run's progress unpersisted (sob-uon, found downstream on the Lite
-  engine). A cancel raised from inside a job's own delivery must not kill
-  that delivery.
+  the execution's progress unpersisted (sob-uon, found downstream on the
+  Lite engine). A cancel raised from inside a job's own delivery must not
+  kill that delivery.
 
   Cancelling a genuinely in-flight delivery from outside is therefore not
   offered. A host that needs it holds the job id and can call

@@ -304,3 +304,30 @@ which happened to be empty this time failing on
 Recorded from the operator's ruling on `sob-as0` (campaign 033, 2026-09-06),
 and implemented by `sob-as0` in `StatifierOban.Invoke.FanOut` and
 `StatifierOban.Invoke.Worker`.
+
+## Note (2026-09-12): the failure lands on an execution
+
+`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+record a chart's progress is persisted against an **execution**. This package's
+prose moved to that word in `sob-mh3`; this record's Decision, its 2026-08-29
+Amendment and both later Notes stand as written.
+
+Where decision 5 has a host answering "is this run live?", where the
+Consequences say the failure event fires and "the run leaves the invoking state
+instead of hanging in it", and where the Amendment's consequences say "the run
+can still be told", read *execution*. The rule is the same one: the terminal
+attempt delivers `error.communication.invoke.<invoke_id>` behind the liveness
+check the seam owes, and a chart that never hears about failed work is the
+outcome this record exists to prevent.
+
+Nothing in the failure vocabulary moves. The three classes and the
+undecodable-payload arm are still what `StatifierOban.Invoke.Worker` maps onto,
+and `c:StatifierOban.Invoke.Delivery.deliver_failure/3` keeps its shape
+(`lib/statifier_oban/invoke/worker.ex` and
+`lib/statifier_oban/invoke/delivery.ex`, read at `2ffc3b7`); the
+`[:statifier_oban, :invoke, :failed]` event keeps its name and its `reason`,
+`detail` and `attempts` keys (`lib/statifier_oban/telemetry.ex`,
+`invoke_failed/7`, read at `2ffc3b7`).
+
+`ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
+no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).

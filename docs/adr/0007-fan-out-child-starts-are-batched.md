@@ -355,3 +355,32 @@ is the other half.
 
 Recorded from the operator's `RQ-034-12` (campaign 034, 2026-09-06) and
 implemented by `sob-28m`.
+
+## Note (2026-09-12): the ChildStarter seam's first argument is `parent_execution_id`
+
+`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+record a chart's progress is persisted against an **execution**. The seam the
+Note of 2026-09-05 added - `:child_starter`, whose callback this package calls
+once per index - names that record in its first argument, so `sob-mh3` renames
+the argument `parent_run_id` to `parent_execution_id`
+(`lib/statifier_oban/invoke/child_starter.ex`, `c:start_child/5` and its
+`@doc`, read at `2ffc3b7`). Nothing else in this record moves.
+
+The rename is documentation, not a contract change. The callback argument is
+positional, so a host implementation written against `parent_run_id` compiles
+and behaves exactly as before; the suite holds that guarantee by keeping one
+starter under each spelling
+(`test/statifier_oban/invoke/child_start_worker_test.exs` under the old name,
+`test/statifier_oban/invoke/fan_out_test.exs` under the new one, read at
+`2ffc3b7`). No job arg, no unique key and no telemetry event name changes: the
+value the seam receives is still the invoke job's `"scope"` arg.
+
+Two readings above change word only. The 2026-09-05 Note's "child runs are
+created through a host-wired seam" reads *child executions*, and the 2026-09-06
+Note's "the settlement side's walk over the created child runs" reads *created
+child executions*. Decision 2's ruling that a batch is a scheduling unit rather
+than a transaction, and the `sb-ADR-0009` decision 6 asymmetry the 2026-09-06
+Note names, are unchanged.
+
+`ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
+no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).

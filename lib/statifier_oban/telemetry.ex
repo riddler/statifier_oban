@@ -113,9 +113,9 @@ defmodule StatifierOban.Telemetry do
 
   Emitted around ADR-0007's fan-out, and recorded by ADR-0006's
   2026-09-06 amendment. None of the three is an answer: the fan-out job
-  completes without delivering, a child start creates a run and delivers
-  nothing, and the settlement side answers the invocation once on behalf
-  of all N.
+  completes without delivering, a child start creates an execution and
+  delivers nothing, and the settlement side answers the invocation once
+  on behalf of all N.
 
   | Event | Measurements | Metadata |
   |---|---|---|
@@ -131,8 +131,8 @@ defmodule StatifierOban.Telemetry do
 
   `:unstarted_cancelled`'s count is half of `sb-ADR-0009` decision 6's
   `first_error` cancel: the indices whose start job never ran. The
-  siblings that already have a child run are the settlement side's to
-  cancel and are not counted here.
+  siblings that already have a child execution are the settlement side's
+  to cancel and are not counted here.
 
   `handler` is on `:fan_out` alone - `ChildStartWorker` never resolves the
   handler name to a module and `cancel_unstarted/3` is given no handler at
@@ -343,7 +343,7 @@ defmodule StatifierOban.Telemetry do
   child at `index` of `count`.
 
   A child start is not an answer (ADR-0007): nothing was delivered into
-  the run. `index` and `count` are the child's position and ride as
+  the execution. `index` and `count` are the child's position and ride as
   metadata; `attempt` is the start job's own, so a child created on a
   retry is distinguishable from one created first time.
   """
@@ -373,7 +373,7 @@ defmodule StatifierOban.Telemetry do
   Emits `[:statifier_oban, :invoke, :unstarted_cancelled]` - the unstarted
   half of `sb-ADR-0009` decision 6's `first_error` cancel ran and
   cancelled `count` start jobs. `count: 0` is a no-op, not an error, and
-  the siblings that already have a child run are cancelled by the
+  the siblings that already have a child execution are cancelled by the
   settlement side and are not counted here.
   """
   @spec invoke_unstarted_cancelled(scope(), String.t(), non_neg_integer()) :: :ok
@@ -389,7 +389,7 @@ defmodule StatifierOban.Telemetry do
 
   @doc """
   Emits `[:statifier_oban, :timer, :fired]` - the delivery seam fed the
-  event back into a live run.
+  event back into a live execution.
   """
   @spec timer_fired(scope(), SendDelayed.t(), module(), Oban.Job.t()) :: :ok
   def timer_fired(scope, %SendDelayed{} = effect, delivery, %Oban.Job{} = job) do
@@ -431,7 +431,8 @@ defmodule StatifierOban.Telemetry do
 
   @doc """
   Emits `[:statifier_oban, :invoke, :delivered]` - `run/1` (or `run/2`)
-  completed and the seam fed `done.invoke.<invoke_id>` into a live run.
+  completed and the seam fed `done.invoke.<invoke_id>` into a live
+  execution.
   """
   @spec invoke_delivered(scope(), module(), Invoke.t(), module(), Oban.Job.t()) :: :ok
   def invoke_delivered(scope, handler, %Invoke{} = invoke, delivery, %Oban.Job{} = job) do
@@ -451,8 +452,8 @@ defmodule StatifierOban.Telemetry do
 
   @doc """
   Emits `[:statifier_oban, :invoke, :discarded]` - a completed invocation
-  landed on a run that is no longer live, dropped the same way a fired
-  timer is.
+  landed on an execution that is no longer live, dropped the same way a
+  fired timer is.
   """
   @spec invoke_discarded(scope(), module(), Invoke.t(), module(), term(), Oban.Job.t()) :: :ok
   def invoke_discarded(scope, handler, %Invoke{} = invoke, delivery, reason, %Oban.Job{} = job) do
@@ -473,7 +474,8 @@ defmodule StatifierOban.Telemetry do
 
   @doc """
   Emits `[:statifier_oban, :invoke, :failed]` - the terminal attempt gave
-  up and `error.communication.invoke.<invoke_id>` went into the run.
+  up and `error.communication.invoke.<invoke_id>` went into the
+  execution.
 
   Mirrors `c:StatifierOban.Invoke.Delivery.deliver_failure/3`: `reason` is
   ADR-0005's three-class vocabulary and `attempts` follows its semantics -

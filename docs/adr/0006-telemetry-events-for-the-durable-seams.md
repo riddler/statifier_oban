@@ -392,3 +392,28 @@ fan-out section and its own count of fourteen. Nothing above moves.
 
 The head Status line gains the `- amended 2026-09-06 (...)` suffix in the
 same change, in the shape ADR-0005's head line already carries.
+
+## Note (2026-09-12): the execution rename reaches the prose, not one event name or key
+
+`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+record a chart's progress is persisted against an **execution**. This package's
+documentation moved to that word in `sob-mh3`. This record's event set did not
+move, and this Note exists mainly to say so.
+
+Unchanged: every one of the fourteen names this record and its 2026-09-06
+Amendment fix, and every measurement and metadata key on them. The identity key
+is still `scope` - not `execution_id`, not `session_id` - for the reason the
+Decision already gives, that the scope is whatever string the host keys its
+rows under. `StatifierOban.Telemetry.events/0` still returns fourteen names,
+five `:timer` and nine `:invoke`, and the moduledoc tables carry the same keys
+(`lib/statifier_oban/telemetry.ex`, read at `2ffc3b7`); `docs/telemetry.md`
+still documents fourteen. There is no dual emit and nothing deprecated, because
+no name changed.
+
+Changed: the word the prose uses for the record the events are *about*. The
+fan-out section now says a child start creates an execution rather than a run,
+the delivery-seam docs say an event is fed back into a live execution, and
+`docs/telemetry.md`'s cardinality section says a `scope` is one per execution.
+
+`ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
+no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
