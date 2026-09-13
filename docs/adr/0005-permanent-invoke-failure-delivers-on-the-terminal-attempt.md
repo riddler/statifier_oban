@@ -348,10 +348,10 @@ The anchor still resolves. At `e3422bb`, `invoke_failed/7` is still defined in
 `[:statifier_oban, :invoke, :failed]`, and still carries `reason`, `detail` and
 `attempts` - `attempts` as a measurement, `reason` and `detail` as metadata
 (`lib/statifier_oban/telemetry.ex`, `invoke_failed/7`, read at `e3422bb`).
-`557ddf3` rewrote `@doc` prose only, "run" to "execution", and changed no event
-name, no measurement, no metadata key and no `@spec` in that file. The claim
-the 2026-09-12 Note rests on therefore holds at `2ffc3b7` and at `e3422bb`
-alike.
+`557ddf3` rewrote `@doc` and `@moduledoc` prose only, "run" to "execution",
+and changed no event name, no measurement, no metadata key and no `@spec` in
+that file. The claim the 2026-09-12 Note rests on therefore holds at
+`2ffc3b7` and at `e3422bb` alike.
 
 The same Note's other two cites,
 `c:StatifierOban.Invoke.Delivery.deliver_failure/3`
