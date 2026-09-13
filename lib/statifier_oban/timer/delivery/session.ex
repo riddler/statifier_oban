@@ -35,9 +35,9 @@ defmodule StatifierOban.Timer.Delivery.Session do
   `Statifier.Registry`) to be running: `Registry.lookup/2` raises when it
   is not, and the job retries rather than discards - a missing registry
   is an environment fact about the host, not a liveness fact about the
-  run. The scope must therefore be the session id the session registered
-  under (`ctx.session_id`); a host using any other scope owes its own
-  `StatifierOban.Timer.Delivery` implementation.
+  execution. The scope must therefore be the session id the session
+  registered under (`ctx.session_id`); a host using any other scope owes
+  its own `StatifierOban.Timer.Delivery` implementation.
   """
 
   @behaviour StatifierOban.Timer.Delivery
@@ -66,9 +66,9 @@ defmodule StatifierOban.Timer.Delivery.Session do
     end
   catch
     # Not a rescue-to-default: the session exiting between the registry
-    # lookup and the status call is the same run fact step 1 reports, and
-    # this boundary returns it as data instead of crashing the worker
-    # into retrying a delivery spec 6.2 requires it to discard.
+    # lookup and the status call is the same execution fact step 1
+    # reports, and this boundary returns it as data instead of crashing
+    # the worker into retrying a delivery spec 6.2 requires it to discard.
     :exit, _reason -> {:discarded, :terminated}
   end
 end

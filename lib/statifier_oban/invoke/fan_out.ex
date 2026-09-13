@@ -4,12 +4,12 @@ defmodule StatifierOban.Invoke.FanOut do
   cancel of the ones that have not started.
 
   ADR-0007 divides a `core.map`-shaped invocation in two. Creating and
-  stepping the N child runs, and settling their answers into one, belong
-  to the package that owns durable runs. **Scheduling** belongs here: one
-  fan-out job per invocation, N child start jobs under it, each keyed so
-  a replay starts only what is missing.
+  stepping the N child executions, and settling their answers into one,
+  belong to the package that owns durable executions. **Scheduling**
+  belongs here: one fan-out job per invocation, N child start jobs under
+  it, each keyed so a replay starts only what is missing.
 
-  Nothing in this module creates a run or answers an invocation. It
+  Nothing in this module creates an execution or answers an invocation. It
   enqueues, refuses, cancels, and - for the one fan-out that is over
   before it starts - hands the empty accumulated list back for the
   caller to answer with.
@@ -121,7 +121,7 @@ defmodule StatifierOban.Invoke.FanOut do
   event's `detail`.
 
   Every value in it is a count or a constant: nothing read out of the
-  handler's `items` reaches the run this way, because the list is the
+  handler's `items` reaches the execution this way, because the list is the
   host's data and an error event is not where host data belongs
   (ADR-0006 decision 9).
   """
@@ -200,9 +200,9 @@ defmodule StatifierOban.Invoke.FanOut do
 
   This is the unstarted half of `sb-ADR-0009` decision 6's `first_error`
   cancel, and it exists because the other half cannot reach these. The
-  live half walks child **run** records; an index whose start job is
-  still `available` has no run record to walk, so it is invisible there
-  and would otherwise start its child after the fan-out had already
+  live half walks child **execution** records; an index whose start job is
+  still `available` has no execution record to walk, so it is invisible
+  there and would otherwise start its child after the fan-out had already
   failed. The settlement side calls this - through the host, which holds
   the config - as the second door of the same cancel.
 
@@ -210,7 +210,7 @@ defmodule StatifierOban.Invoke.FanOut do
   generation, restricted to the states a start job that has not run can
   be in - the set the private StatifierOban.CancellableStates module
   lists. So a child already created is left alone: its start job is
-  `completed` and outside the match, and cancelling the run it created
+  `completed` and outside the match, and cancelling the execution it created
   is the live half's job, not this one's.
   A job `executing` right now is out for the same reason it is out of
   `StatifierOban.Invoke.Handler.perform_cancel/3` - killing a start
@@ -222,8 +222,9 @@ defmodule StatifierOban.Invoke.FanOut do
 
   Emits `[:statifier_oban, :invoke, :unstarted_cancelled]` carrying the
   sweep's own count. That count is only this door's half of decision 6's
-  cancel; the siblings that already have a child run are the live half's,
-  and adding the two halves is what matches the run's cancelled entries.
+  cancel; the siblings that already have a child execution are the live
+  half's, and adding the two halves is what matches the execution's
+  cancelled entries.
   """
   @spec cancel_unstarted(Config.t(), String.t(), String.t()) :: {:ok, non_neg_integer()}
   def cancel_unstarted(%Config{} = config, scope, invoke_id)

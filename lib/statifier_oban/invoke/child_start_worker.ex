@@ -5,10 +5,10 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   `StatifierOban.Invoke.FanOut` enqueues N of these up front, one per
   item, and each one calls the host-wired
   `StatifierOban.Invoke.ChildStarter` seam for its own index, with the
-  fan-out's aggregation policy. Creating the run is the seam's;
+  fan-out's aggregation policy. Creating the execution is the seam's;
   scheduling the call is this module's, which is the whole of the
   division ADR-0007 draws between this package and the one that owns
-  durable runs.
+  durable executions.
 
   ## The key
 
@@ -27,7 +27,7 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
 
   - the seam returns `:ok` -> the job completes;
   - the seam returns `{:error, reason}` -> the job retries with
-    `{:start_failed, reason}` recorded. A run store that is down or
+    `{:start_failed, reason}` recorded. An execution store that is down or
     contended is an environment fact, and `c:StatifierOban.Invoke.ChildStarter.start_child/5`
     is idempotent on the index by contract, so retrying is what
     at-least-once means here;
@@ -47,13 +47,13 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   that retries emits nothing until it succeeds; the retry itself is
   Oban's exception event.
 
-  Nothing here delivers into the run. A child start is not an answer:
-  the invocation is answered once, by the settlement side, when every
-  child has settled. A start that can never succeed exhausts its retries
-  and is visible on the job row, leaving its index without a run record -
-  the partially-started fan-out ADR-0007 decision 2 and `sb-ADR-0009`
-  decision 8 both specify behaviour for, and which the settlement side
-  is the one positioned to notice.
+  Nothing here delivers into the execution. A child start is not an
+  answer: the invocation is answered once, by the settlement side, when
+  every child has settled. A start that can never succeed exhausts its
+  retries and is visible on the job row, leaving its index without an
+  execution record - the partially-started fan-out ADR-0007 decision 2 and
+  `sb-ADR-0009` decision 8 both specify behaviour for, and which the
+  settlement side is the one positioned to notice.
   """
 
   use Oban.Worker,
@@ -97,7 +97,7 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   # a codec this node cannot use is an environment fact and retries,
   # while everything else is a fact about the row and cancels. There is
   # no failure delivery on the way past here - a start job names an
-  # index of an invocation, and telling the run that one index is
+  # index of an invocation, and telling the execution that one index is
   # undecodable is not this side's message to send.
   @spec decode(JobArgs.args()) ::
           {:ok, String.t(), String.t(), Statifier.Effect.Invoke.t()}
