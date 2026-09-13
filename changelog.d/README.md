@@ -68,3 +68,20 @@ Assemble the fragments into a new version section in `CHANGELOG.md`, grouped by
 heading and ordered `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`,
 `Security`. Delete the fragments in the same commit that cuts the release, and
 tag it.
+
+A breaking entry gets a bold `**Breaking**` heading of its own, written
+directly under the standard heading its fragment named and above that
+heading's ordinary bullets. `README.md`'s pre-1.0 banner promises readers that
+every such change is recorded in `CHANGELOG.md` "under a bold **Breaking**
+heading that says what to do about it", and promotion is the only place that
+promise can be kept: a fragment writes one of the six standard headings and
+nothing else, so nothing before the release knows which of its bullets are
+breaking. The bullet itself still carries over byte for byte - this is where
+it is placed, not a license to reword it.
+
+The promise is forward-looking, and so is the rule. Sections already shipped
+are left as they stand, for the reason the release recipe gives for shipped
+headings generally: rewriting a published section to match a convention
+adopted after it was written loses the record of what the published section
+said. The one shipped section that carries a breaking entry today has it as a
+bold bullet among the ordinary ones, and it stays that way (ruled 2026-09-13).

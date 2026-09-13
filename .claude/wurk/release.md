@@ -88,6 +88,18 @@ reference prep commit resolved at the top of this file.
    **Carry every bullet over byte for byte.** Reordering, consolidating or
    rewording a fragment's bullet is an editorial pass a human does separately,
    before the release.
+
+   A breaking bullet is placed under a bold `**Breaking**` heading of its own,
+   written directly below the standard heading its fragment named and above
+   that heading's ordinary bullets. This is where the heading order above is
+   read, so the rule is stated here as well as in
+   `changelog.d/README.md`'s "At release" section, which is where a fragment's
+   author meets it. The README's pre-1.0 banner is what both serve: it
+   promises readers a bold **Breaking** heading, and promotion is the only
+   step that can produce one, because a fragment writes a standard Keep a
+   Changelog heading and nothing that marks an entry breaking. Placement only
+   - the bullet's own bytes still carry over unchanged, and shipped sections
+   are left as they stand.
 4. A lead paragraph between the heading and the first `### ` sub-heading is
    optional here and is the exception, not the rule: `0.2.1` and `0.1.0` carry
    one because each says something the bullets do not (a documentation-only
@@ -108,11 +120,23 @@ judgement, not a rule that computes it.
 ## The README install pin
 
 `release.readme_pin` is `true`. `README.md`'s `def deps` snippet carries
-`{:statifier_oban, "~> X.Y"}` - the major/minor form with the patch component
-dropped that the skill's step 2 bumps.
+`{:statifier_oban, "~> X.Y.0"}` - the exact-minor form, with the patch
+component written as a literal `0` rather than dropped. The skill's step 2 is
+what bumps it, so the pin needs no step of its own here; what this section
+adds is the **form**, which the skill leaves to the project.
 
-Two things about this pin that a release here has to know:
+Three things about this pin that a release here has to know:
 
+- **The form is `~> X.Y.0`, not `~> X.Y`.** The pre-1.0 banner at the top of
+  `README.md` says pinning to an exact minor, `~> X.Y.0`, is the recommended
+  way to consume this package until 1.0, and a snippet a host copies out of
+  the same file should not recommend one thing and demonstrate another. A prep
+  writes the `.0` form; it does not "repair" the snippet back to the
+  patch-dropped shape the skill's own step 2 assumes. The two forms admit the
+  same patch releases (`~> X.Y.0` and `~> X.Y` both admit `X.Y.1`), so nothing
+  else in this section changes with the form - only the string written. (The
+  snippet carried the patch-dropped form, and this section described it as
+  such, until 2026-09-13 on `sob-aze`.)
 - **The format precedent is `b58fb95` for the pin's shape, and the reference
   prep for the move.** `b58fb95` (the 0.2.1 docs pass) moved the pin from
   `~> 0.1` to `~> 0.2` and recorded that in the 0.2.1 changelog as a fix; for
@@ -125,13 +149,14 @@ Two things about this pin that a release here has to know:
   current version is. Read it and check it against the version file instead:
 
   ```bash
-  grep 'statifier_oban, "~>' README.md   # the pin
+  grep 'statifier_oban, "~>' README.md   # the pin, ~> X.Y.0
   grep '@version "' mix.exs              # the version it should track
   ```
 
-  They should agree on major and minor. If they ever do not, the pin edit
-  repairs the drift in one move rather than stepping one release at a time: it
-  goes straight to the current major/minor, because the stale constraint no
+  They should agree on major and minor, with the pin in the `~> X.Y.0` form.
+  If they ever do not, the pin edit repairs the drift in one move rather than
+  stepping one release at a time: it goes straight to the current
+  major/minor, because the stale constraint no
   longer admits the version being released. That is the recipe correcting a
   drift, not a mistake to undo - say so in the release commit body when it
   happens.
