@@ -156,7 +156,7 @@ Two recorded limits shape what this package can promise:
   `<send delay="...">` inside a `<foreach>` is fully supported.
 
 Scoping is mandatory in any stored key: Statifier's `send_counter` restarts at 0
-per chart run, so a bare `send_id` is unique only within a run.
+per chart execution, so a bare `send_id` is unique only within an execution.
 
 ## Build & Test
 

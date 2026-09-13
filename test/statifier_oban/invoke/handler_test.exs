@@ -166,7 +166,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
     scope = Statifier.Session.session_id(session)
 
     # The session's executor performed the base's start instruction: one
-    # stored job, keyed on this run's scope and the author-written id.
+    # stored job, keyed on this execution's scope and the author-written id.
     wait_until(fn -> match?([_job], stored_jobs(scope, "inv_e2e")) end)
     assert [%Oban.Job{state: "available"}] = stored_jobs(scope, "inv_e2e")
 
