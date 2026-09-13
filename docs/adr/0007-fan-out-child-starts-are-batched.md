@@ -358,27 +358,26 @@ implemented by `sob-28m`.
 
 ## Note (2026-09-12): the ChildStarter seam's first argument is `parent_execution_id`
 
-`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
-record a chart's progress is persisted against an **execution**. The seam the
-Note of 2026-09-05 added - `:child_starter`, whose callback this package calls
-once per index - names that record in its first argument, so `sob-mh3` renames
-the argument `parent_run_id` to `parent_execution_id` in
+`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the
+durable record a chart's progress is persisted against an **execution**. The
+seam the Note of 2026-09-05 added - `:child_starter`, whose callback this
+package calls once per index - names that record in its first argument, so
+`sob-mh3` renames the argument `parent_run_id` to `parent_execution_id` in
 `lib/statifier_oban/invoke/child_starter.ex`, on `c:start_child/5` and in the
-`@doc` and `@moduledoc` around it. That file read `parent_run_id` at
-`2ffc3b7`, the commit this change is based on, and reads
-`parent_execution_id` from `sob-mh3` forward. Nothing else in this record
-moves.
+`@doc` and `@moduledoc` around it. That file read `parent_run_id` at `2ffc3b7`,
+the commit this change is based on, and reads `parent_execution_id` from
+`sob-mh3` forward. Nothing else in this record moves.
 
-The rename is documentation, not a contract change. The callback argument is
-positional, so a host implementation written against `parent_run_id` compiles
-and behaves exactly as before; the suite holds that guarantee by keeping one
-starter under each spelling. Both files wrote `parent_run_id` at `2ffc3b7`;
-from `sob-mh3` forward `test/statifier_oban/invoke/child_start_worker_test.exs`
-keeps that name, with a comment saying why, and
-`test/statifier_oban/invoke/fan_out_test.exs` takes the new one. No job arg,
-no unique key and no telemetry event name changes: the value the seam
-receives is still the invoke job's `"scope"` arg, unchanged at `2ffc3b7` and
-unchanged here.
+The rename is documentation, not a contract change. The callback
+argument is positional, so a host implementation written against
+`parent_run_id` compiles and behaves exactly as before; the suite
+holds that guarantee by keeping one starter under each spelling.
+Both files wrote `parent_run_id` at `2ffc3b7`; from `sob-mh3` forward
+`test/statifier_oban/invoke/child_start_worker_test.exs` keeps that name, with
+a comment saying why, and `test/statifier_oban/invoke/fan_out_test.exs` takes
+the new one. No job arg, no unique key and no telemetry event name changes: the
+value the seam receives is still the invoke job's `"scope"` arg, unchanged at
+`2ffc3b7` and unchanged here.
 
 Two readings above change word only. The 2026-09-05 Note's "child runs are
 created through a host-wired seam" reads *child executions*, and the 2026-09-06
