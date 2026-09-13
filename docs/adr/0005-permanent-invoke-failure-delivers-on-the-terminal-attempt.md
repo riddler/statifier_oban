@@ -331,3 +331,34 @@ and `c:StatifierOban.Invoke.Delivery.deliver_failure/3` keeps its shape
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
 no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+
+## Note (2026-09-13): `telemetry.ex` moved after the cite above was read
+
+The rule this line records: a read-at label on a merged record is never edited
+in place. When a later commit touches a cited file, the record says so by
+addition, names the commit, and reports whether the cite's anchor still
+resolves at today's `main`.
+
+The Note of 2026-09-12 above labels its `lib/statifier_oban/telemetry.ex` cite
+"read at `2ffc3b7`". `sob-mh3`'s own PR (79) then changed that file at
+`557ddf3`. The `2ffc3b7` label stays as written; what follows is the check.
+
+The anchor still resolves. At `e3422bb`, `invoke_failed/7` is still defined in
+`lib/statifier_oban/telemetry.ex`, still emits
+`[:statifier_oban, :invoke, :failed]`, and still carries `reason`, `detail` and
+`attempts` - `attempts` as a measurement, `reason` and `detail` as metadata
+(`lib/statifier_oban/telemetry.ex`, `invoke_failed/7`, read at `e3422bb`).
+`557ddf3` rewrote `@doc` prose only, "run" to "execution", and changed no event
+name, no measurement, no metadata key and no `@spec` in that file. The claim
+the 2026-09-12 Note rests on therefore holds at `2ffc3b7` and at `e3422bb`
+alike.
+
+The same Note's other two cites,
+`c:StatifierOban.Invoke.Delivery.deliver_failure/3`
+(`lib/statifier_oban/invoke/delivery.ex`) and the failure-class mapping in
+`lib/statifier_oban/invoke/worker.ex`, were not touched between `2ffc3b7` and
+`e3422bb`; both anchors resolve unchanged (read at `e3422bb`).
+
+The premise surface is `lib/statifier_oban/telemetry.ex` at `e3422bb`; the
+event set itself is fixed by ADR-0006 and enumerated by that record's suite,
+not here. Recorded by `sob-v9s` (campaign SF044).
