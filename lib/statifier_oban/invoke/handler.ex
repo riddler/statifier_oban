@@ -3,7 +3,7 @@ defmodule StatifierOban.Invoke.Handler do
   The Oban-backed base for a `Statifier.Invoke.Handler` implementation:
   `use` it and the host's `<invoke type="...">` runs its work in an Oban
   job on the host-supplied instance, with completion delivered back into
-  the run as `done.invoke.<invoke_id>` through
+  the execution as `done.invoke.<invoke_id>` through
   `StatifierOban.Invoke.Delivery`.
 
       defmodule MyApp.AuthorizationHandler do
@@ -25,10 +25,10 @@ defmodule StatifierOban.Invoke.Handler do
         end
       end
 
-  Work that keys on the **run** rather than on the invocation defines
+  Work that keys on the **execution** rather than on the invocation defines
   `run/2` instead, which is handed the job's `t:run_ctx/0` alongside the
   effect - the scope lives on the job row, not on the effect, so `run/1`
-  cannot see which run it is working for:
+  cannot see which execution it is working for:
 
       defmodule MyApp.ProvisioningHandler do
         use StatifierOban.Invoke.Handler
@@ -70,10 +70,10 @@ defmodule StatifierOban.Invoke.Handler do
     once, so the MUST-be-idempotent-on-`invoke_id` contract from
     statifier-ex's `docs/extending.md` lands on it. `{:ok, donedata}`
     becomes `done.invoke.<invoke_id>` with that donedata, delivered
-    behind the run-liveness check; `{:error, reason}` makes the job
+    behind the execution-liveness check; `{:error, reason}` makes the job
     retry, and a raise does the same. Exhausting those retries
     discards the job and delivers
-    `error.communication.invoke.<invoke_id>` into the run (see
+    `error.communication.invoke.<invoke_id>` into the execution (see
     "Permanent failure surfaces into the chart" below).
 
   `config/0` is read at `perform/2` time, never at planning time - which
@@ -88,11 +88,11 @@ defmodule StatifierOban.Invoke.Handler do
   crashed host re-runs the same drive. `invoke_id` is either the
   author's literal id, used verbatim, or a deterministic
   `%MachineState{}` counter (st-ADR-0008 as amended); it restarts per
-  chart run, so the scope (`ctx.session_id`, or the host's own durable
-  run id) keeps unrelated runs apart. `macrostep` is what tells a
-  replay from a re-entry: an authored id is byte-identical on every
-  re-entry of its state, and only the macrostep separates that fresh
-  scheduling decision from a redelivery of the old one. The unique
+  chart execution, so the scope (`ctx.session_id`, or the host's own
+  durable execution id) keeps unrelated executions apart. `macrostep` is
+  what tells a replay from a re-entry: an authored id is byte-identical
+  on every re-entry of its state, and only the macrostep separates that
+  fresh scheduling decision from a redelivery of the old one. The unique
   window is every state over an infinite period, and the unique fields
   exclude `:queue` and the meta the delivery module rides on - a host
   moving its invoke queue or reconfiguring its delivery must not turn a
@@ -117,13 +117,13 @@ defmodule StatifierOban.Invoke.Handler do
   `{:error, reason}` from `run/1` (and a raise or exit out of it) maps
   to an Oban **retry**, never a cancel: the work is idempotent on
   `invoke_id` by contract, so retrying is what at-least-once means.
-  When the retries are exhausted, Oban discards the job - and the run
+  When the retries are exhausted, Oban discards the job - and the execution
   hears about it. The discarding attempt delivers
 
       error.communication.invoke.<invoke_id>
 
   into the chart, carrying `%{"reason" => class, "attempts" => n,
-  "detail" => text}`, behind the same run-liveness check a completion
+  "detail" => text}`, behind the same execution-liveness check a completion
   goes through. A chart that parks failed work for operator recovery
   transitions on that event, or on the bare `error.communication` it
   extends, and no longer hangs in the invoking state when your `run/1`
@@ -137,13 +137,13 @@ defmodule StatifierOban.Invoke.Handler do
   This was an open question in earlier versions of this module; ADR-0005
   records how it was settled.
 
-  What this module deliberately does not do: interpret `run/1`'s
-  donedata (`<finalize>` and namelist auto-assign are the session's, per
+  What this module deliberately does not do: interpret `run/1`'s donedata
+  (`<finalize>` and namelist auto-assign are the session's, per
   st-ADR-0051 decision 6), dedup your side effects (the at-least-once
   contract is documented upstream and pinned by
-  `Statifier.Testing.HandlerCase`), or feed anything to a dead run (the
-  delivery seam discards a completed invoke against a dead or halted run
-  the same way a fired timer is discarded).
+  `Statifier.Testing.HandlerCase`), or feed anything to a dead execution
+  (the delivery seam discards a completed invoke against a dead or halted
+  execution the same way a fired timer is discarded).
   """
 
   import Ecto.Query, only: [where: 3]
@@ -164,9 +164,9 @@ defmodule StatifierOban.Invoke.Handler do
   What the worker knows about the job it is running `run/2` inside, and
   the effect does not carry.
 
-  `:scope` is the run the invocation belongs to - the same string the
+  `:scope` is the execution the invocation belongs to - the same string the
   base validated out of the planning `ctx` (`ctx.session_id`, or the
-  host's own durable run id) and stored on the job row, so work keyed
+  host's own durable execution id) and stored on the job row, so work keyed
   to the workflow instance can key on it. `:invoke_id` is the
   idempotency key, repeated here so a handler destructuring the context
   has the whole identity pair in one place; it is also on the effect,
@@ -235,7 +235,7 @@ defmodule StatifierOban.Invoke.Handler do
   The work itself, executed inside the Oban job - at least once per
   `invoke_id`, so it MUST be idempotent on it (statifier-ex
   `docs/extending.md`, "At-least-once"). `{:ok, donedata}` is delivered
-  back to the run as `done.invoke.<invoke_id>`; `{:error, reason}` and
+  back to the execution as `done.invoke.<invoke_id>`; `{:error, reason}` and
   raises both make the job retry, and exhausting the retries delivers
   `error.communication.invoke.<invoke_id>` instead.
 
@@ -248,15 +248,15 @@ defmodule StatifierOban.Invoke.Handler do
 
   @doc """
   The same work, handed the job's `t:run_ctx/0` as well as the effect -
-  the arity to define when the work keys on the **run** rather than on
-  the invocation alone (sob-7b1).
+  the arity to define when the work keys on the **execution** rather than
+  on the invocation alone (sob-7b1).
 
   The effect is the invocation, so `run/1` sees everything about *what*
-  was invoked; what it cannot see is *which run* invoked it, because the
-  scope lives on the job row rather than on the effect. Provisioning
-  keyed to the workflow instance, a write into a per-run table, a lookup
-  of the host's own record for the run: all of that needs the scope, and
-  this is the arity that has it.
+  was invoked; what it cannot see is *which execution* invoked it, because
+  the scope lives on the job row rather than on the effect. Provisioning
+  keyed to the workflow instance, a write into a per-execution table, a
+  lookup of the host's own record for the execution: all of that needs the
+  scope, and this is the arity that has it.
 
   Define `run/1` or `run/2`, not both - a module defining both runs
   through `run/2`, and the `run/1` clause is dead code. A module
@@ -314,7 +314,7 @@ defmodule StatifierOban.Invoke.Handler do
              Module.defines?(env.module, {:run, 2}, :def) do
       raise "#{inspect(env.module)} uses StatifierOban.Invoke.Handler but defines " <>
               "neither run/1 nor run/2. Define run/1 for work that needs only the " <>
-              "invoke effect, or run/2 for work that also needs the run's scope."
+              "invoke effect, or run/2 for work that also needs the execution's scope."
     end
 
     :ok
@@ -414,7 +414,7 @@ defmodule StatifierOban.Invoke.Handler do
   the same reason it does on the timer half (`StatifierOban.Timer.cancel/3`,
   sob-uon). Spec 6.4.3 cancels an invocation when its invoking state is
   exited, and the commonest way that state is exited is the invocation's
-  own completion: the job delivers `done.invoke.<invoke_id>`, the run
+  own completion: the job delivers `done.invoke.<invoke_id>`, the execution
   transitions out, and the exit runs `<cancel>` for the very `invoke_id`
   being delivered - so the cancel and the invocation are the same Oban
   job. Sweeping `executing` rows here would have

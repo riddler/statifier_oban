@@ -41,7 +41,7 @@ defmodule StatifierOban.Invoke.Worker do
   the result to the job's `StatifierOban.Invoke.Delivery` module (from
   the meta written at enqueue time; absent meta falls back to the
   documented default, `StatifierOban.Invoke.Delivery.Session`), which
-  owes the run-liveness check before any completion is fed back. The
+  owes the execution-liveness check before any completion is fed back. The
   outcomes map onto Oban states so each is observable on the job row:
 
   - work done and delivered -> the job completes (`:ok`);
@@ -58,8 +58,8 @@ defmodule StatifierOban.Invoke.Worker do
     `{:fan_out_refused, refusal}` and delivers
     `error.communication.invoke.<invoke_id>` on the way past; one that
     could not be scheduled right now retries;
-  - the run is not live -> the job cancels with `{:discarded, reason}`
-    recorded - a completed invoke against a dead or halted run is
+  - the execution is not live -> the job cancels with `{:discarded, reason}`
+    recorded - a completed invoke against a dead or halted execution is
     discarded the same way a fired timer is;
   - `run/1` returns `{:error, reason}` -> the job retries with
     `{:run_failed, reason}` recorded - the work is idempotent on
@@ -70,7 +70,7 @@ defmodule StatifierOban.Invoke.Worker do
     `max_attempts`, so Oban will discard rather than retry) -> the same
     job outcome as above, plus `c:StatifierOban.Invoke.Delivery.deliver_failure/3`
     on the way past, feeding `error.communication.invoke.<invoke_id>`
-    into the run behind the same liveness check a completion goes
+    into the execution behind the same liveness check a completion goes
     through (st-ADR-0068, ADR-0005);
   - an undecodable row cancels with `{:undecodable, reason}` - no number
     of retries makes a corrupt row decodable - and delivers
@@ -110,7 +110,7 @@ defmodule StatifierOban.Invoke.Worker do
     `t:StatifierOban.Invoke.FanOut.refusal/0` inspected, which carries
     the count and the cap for the over-the-cap case (ADR-0007 decision
     8). It is counts and constants only - the fanned-out list itself
-    never reaches the run this way. The class is ADR-0005's, added to
+    never reaches the execution this way. The class is ADR-0005's, added to
     its decision 3 by that record's 2026-09-05 Note.
 
   `:attempts` is the job's `attempt` on the try that gave up. For the
@@ -179,9 +179,9 @@ defmodule StatifierOban.Invoke.Worker do
   end
 
   # ADR-0006's delivery seam, the invoke half: the discard is a completed
-  # invocation landing on a run that is no longer live, which Oban reports
-  # as a stop with the verdict inside `:result`. Both arms that answer an
-  # invocation from this job come through here - `run/1`'s own
+  # invocation landing on an execution that is no longer live, which Oban
+  # reports as a stop with the verdict inside `:result`. Both arms that
+  # answer an invocation from this job come through here - `run/1`'s own
   # `{:ok, donedata}` and the empty fan-out's `[]` - because they are the
   # same delivery through the same liveness-checked door, and only what
   # produced the answer differs.
@@ -294,9 +294,9 @@ defmodule StatifierOban.Invoke.Worker do
   #
   # The identity fields are read on their own because they are what an
   # opaque payload's corruption does not touch: a row whose `params`
-  # blob will not decode still names its run and its invocation, and a
-  # chart parked on `error.communication` would otherwise hang on it
-  # forever. When `scope` or `invoke_id` are themselves undecodable
+  # blob will not decode still names its execution and its invocation,
+  # and a chart parked on `error.communication` would otherwise hang on
+  # it forever. When `scope` or `invoke_id` are themselves undecodable
   # there is no door - the row names nobody to tell - and the `with`
   # falls through to the bare cancel, which is exactly the old
   # behaviour. An unresolvable delivery module is the same dead end.
@@ -332,7 +332,7 @@ defmodule StatifierOban.Invoke.Worker do
   # to the job - the original is re-raised with its own stacktrace, so
   # the retry, the discard and the recorded error are all exactly what
   # they were. They exist only so the terminal attempt gets to tell the
-  # run about the failure on its way past: a handler that raises
+  # execution about the failure on its way past: a handler that raises
   # exhausts its retries just as permanently as one returning
   # `{:error, reason}`, and a chart parked on `error.communication`
   # would otherwise hang forever on the commonest failure of all.
@@ -375,7 +375,7 @@ defmodule StatifierOban.Invoke.Worker do
 
   # A handler defines `run/1` or `run/2`, and `run/2` is the more
   # specific contract - it is the arity a handler defines *because* the
-  # work keys on the run - so a module exporting both runs through it.
+  # work keys on the execution - so a module exporting both runs through it.
   # The context is built here rather than stored on the row: every field
   # in it is already on the job (the scope is a top-level arg, read by
   # the uniqueness key), so there is nothing new to serialize and old
@@ -415,9 +415,9 @@ defmodule StatifierOban.Invoke.Worker do
   # Non-terminal failures deliver nothing - a retry that will be tried
   # again is not a fact the chart should hear about.
   #
-  # A `{:discarded, _}` from the seam is the ordinary case of a run that
-  # died before its invocation gave up; there is nothing to do about it
-  # and nothing to retry, since the job is discarded either way.
+  # A `{:discarded, _}` from the seam is the ordinary case of an execution
+  # that died before its invocation gave up; there is nothing to do about
+  # it and nothing to retry, since the job is discarded either way.
   @spec maybe_fail(
           Oban.Job.t(),
           module(),

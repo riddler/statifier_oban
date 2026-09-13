@@ -11,10 +11,11 @@ defmodule StatifierOban.Timer.Key do
   stored effect.
 
   `scope` is always an argument and never derived: Statifier's counters
-  restart for every chart run, so `send_1` (or ordinal `1`) from one run
-  addresses the same row as its twin from an unrelated run unless the store
-  keeps them apart. It is `ctx.session_id` (spec 5.10's `_sessionid`) for a
-  live session, or the host's own durable run id for a process-less host.
+  restart for every chart execution, so `send_1` (or ordinal `1`) from one
+  execution addresses the same row as its twin from an unrelated execution
+  unless the store keeps them apart. It is `ctx.session_id` (spec 5.10's
+  `_sessionid`) for a live session, or the host's own durable execution id
+  for a process-less host.
   """
 
   alias Statifier.Effect.{Cancel, SendDelayed}

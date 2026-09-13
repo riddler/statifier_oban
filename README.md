@@ -41,10 +41,10 @@ end
 
 Early, under active development. Delayed sends run through Oban end to end -
 schedule from the `SendDelayed` effect, cancel from the `Cancel` effect,
-deliver behind the run-liveness check - and `use StatifierOban.Invoke.Handler`
-is the Oban-backed invoke handler base on statifier's handler registry. Both
-enqueue sites run the host-opaque job-arg fields through the optional
-`:opaque_codec` seam described below.
+deliver behind the execution-liveness check - and `use
+StatifierOban.Invoke.Handler` is the Oban-backed invoke handler base on
+statifier's handler registry. Both enqueue sites run the host-opaque job-arg
+fields through the optional `:opaque_codec` seam described below.
 
 One thing is deliberately unfinished: what a *permanently* failed invocation
 should look like inside the chart. A `run/1` that keeps failing exhausts its
@@ -57,7 +57,7 @@ Beyond this package's own suite, the shape is exercised downstream:
 [statifier_examples](https://github.com/riddler/statifier_examples), a public
 example application, runs an abandoned-signup reminder on `Oban.Engines.Lite`
 end to end - arming a delayed send, cancelling it, letting it fire, and
-delivering the fired event into a run that is rebuilt from storage rather
+delivering the fired event into an execution that is rebuilt from storage rather
 than held in a process - with no host-side workarounds. Nothing in that is
 engine-specific. This package never owns, starts, or names an Oban instance
 (ADR-0002), so the engine stays the host's choice; what the host supplies is
@@ -69,9 +69,9 @@ the ordinary host-side contract:
 - Oban's own migration, run against the host's repo - this package ships
   none;
 - a `StatifierOban.Timer.Delivery` implementation, where the default
-  session-registry one does not fit. That app keeps its runs in storage
+  session-registry one does not fit. That app keeps its executions in storage
   rather than in session processes, so its delivery answers the liveness
-  question from the stored run's status and feeds the fired event back as
+  question from the stored execution's status and feeds the fired event back as
   one more drive.
 
 ## A worked example
@@ -137,8 +137,9 @@ defmodule MyApp.TimerSubscriber do
   def init({session, config}) do
     :ok = Statifier.Session.subscribe(session, self())
     # The scope keys every stored job. `session_id` is the right answer for
-    # any host running sessions; a host with its own durable run id supplies
-    # that instead, along with its own `StatifierOban.Timer.Delivery`.
+    # any host running sessions; a host with its own durable execution id
+    # supplies that instead, along with its own
+    # `StatifierOban.Timer.Delivery`.
     {:ok, %{scope: Statifier.Session.session_id(session), config: config}}
   end
 
@@ -171,9 +172,9 @@ uniqueness is the load-bearing part: an at-least-once host that re-executes
 the same drive after a crash gets `{:ok, %Oban.Job{conflict?: true}}` and one
 stored job, not two authorizations expiring. When the job fires seven days
 later, `StatifierOban.Timer.Worker` feeds `authorization.expired` back into
-the run through the delivery seam, behind a liveness check - a run that
-terminated or halted in the meantime discards the event rather than receiving
-it.
+the execution through the delivery seam, behind a liveness check - an
+execution that terminated or halted in the meantime discards the event rather
+than receiving it.
 
 `Timer.cancel/3` matches on `{scope, send_id}` and returns `{:ok, count}`:
 `capture.requested` leaves `authorized`, the `<cancel sendid="hold"/>` becomes
@@ -206,10 +207,11 @@ defmodule MyApp.CaptureHandler do
 end
 ```
 
-Work that keys on the **run** - provisioning tied to the workflow instance, a
-write into a per-run table - defines `run/2` instead. The invoke effect names
-the invocation but not the run it belongs to, so the second argument carries
-the run's scope (and its `invoke_id`) from the job row:
+Work that keys on the **execution** - provisioning tied to the workflow
+instance, a write into a per-execution table - defines `run/2` instead. The
+invoke effect names the invocation but not the execution it belongs to, so the
+second argument carries the execution's scope (and its `invoke_id`) from the
+job row:
 
 ```elixir
 @impl StatifierOban.Invoke.Handler
@@ -259,10 +261,10 @@ optional.
 The second transition is the other end of the same story. `run/1` returning
 `{:error, reason}` retries, as at-least-once work should - but when the
 retries run out, the job is discarded and
-`error.communication.invoke.capture` is delivered into the run behind the
+`error.communication.invoke.capture` is delivered into the execution behind the
 same liveness check, carrying `%{"reason" => "run_failed", "attempts" => n,
 "detail" => text}`. Without it the chart would sit in `capturing` forever on
-a processor that never comes back; with it the run parks in
+a processor that never comes back; with it the execution parks in
 `needs_attention`, where an operator can see it. A chart that would rather
 catch every kind of communication failure at once transitions on the bare
 `error.communication` instead, and catches this too. See ADR-0005 and
@@ -271,9 +273,9 @@ statifier-ex's ADR-0068.
 #### Where each step's handler comes from
 
 `invoke_handlers` above is the whole answer, and it answers for **every**
-`<invoke>` a run reaches, not only the first. The lookup is the engine's,
+`<invoke>` an execution reaches, not only the first. The lookup is the engine's,
 not this package's: when a drive plans an `<invoke>`, it looks the `type` up
-in that run's registry (statifier-ex's ADR-0051 decision 4) and hands the
+in that execution's registry (statifier-ex's ADR-0051 decision 4) and hands the
 matching module the planning call. This package only ever sees a module that
 lookup already chose - `StatifierOban.Invoke.Handler`'s `perform/2` writes
 its name onto the job row, and `StatifierOban.Invoke.Worker` reads that name
@@ -286,23 +288,23 @@ Two consequences are worth stating outright, because a host met both:
   per-delivery handler map is not a thing to configure:
   `StatifierOban.Invoke.Delivery` is asked only about the invocation that
   just finished.
-- **A chart whose answer transitions into another invoking state resolves
-  the second handler on the drive that answer caused.** A run reaching that
+- **A chart whose answer transitions into another invoking state resolves the
+  second handler on the drive that answer caused.** An execution reaching that
   drive with a registry that is missing the second `type` gets
-  `error.execution` at plan time - the same class an unregistered type
-  always raises, arriving on the second step rather than the first. The
-  fault is a registry that differs between entry paths, not a delivery that
-  dropped something.
+  `error.execution` at plan time - the same class an unregistered type always
+  raises, arriving on the second step rather than the first. The fault is a
+  registry that differs between entry paths, not a delivery that dropped
+  something.
 
-A host running `Statifier.Session` fixes the registry once, at
-`start_link/2`, so every step of the run sees the same map by construction.
-A **process-less host** - one that persists positions and drives the
-interpreter per event, the shape `StatifierOban.Invoke.Delivery`'s moduledoc
-describes - supplies the registry per drive instead, and the re-entry drive a
-completed invoke triggers is a drive like any other. Build the map in one
-place and hand it to every drive, the delivery seam's re-entry included; a
-map assembled only on the path that *starts* a run is exactly the
-second-step failure above.
+A host running `Statifier.Session` fixes the registry once, at `start_link/2`,
+so every step of the execution sees the same map by construction. A
+**process-less host** - one that persists positions and drives the interpreter
+per event, the shape `StatifierOban.Invoke.Delivery`'s moduledoc describes -
+supplies the registry per drive instead, and the re-entry drive a completed
+invoke triggers is a drive like any other. Build the map in one place and hand
+it to every drive, the delivery seam's re-entry included; a map assembled only
+on the path that *starts* an execution is exactly the second-step failure
+above.
 
 ### The same two seams in a signup wizard
 
@@ -322,9 +324,9 @@ across its variants uses the same two doors:
 
 ### Fan-out: one invocation, N children
 
-A `core.map`-shaped block is one invocation that becomes N child runs, one
+A `core.map`-shaped block is one invocation that becomes N child executions, one
 per item, with their answers accumulated into one result. This package
-schedules that; it does not create runs. A handler fans out by returning
+schedules that; it does not create executions. A handler fans out by returning
 `{:fan_out, items}` instead of `{:ok, donedata}`:
 
 ```elixir
@@ -340,7 +342,8 @@ defmodule MyApp.MapHandler do
   # the datamodel *path* the author typed - `"chunks"` - and never the
   # list itself: the emitted bytes are the same over any N. A job holds
   # the effect and no datamodel, so evaluating that path is the
-  # handler's work, against the parent run's own persisted position -
+  # handler's work, against the parent execution's own persisted
+  # position -
   # which is what the job's scope names.
   @impl StatifierOban.Invoke.Handler
   def run(invoke, %{scope: parent_run_id}) do
@@ -348,7 +351,7 @@ defmodule MyApp.MapHandler do
          {:ok, machine_state} <- MyApp.Runs.machine_state(parent_run_id) do
       # Fan out over descriptors - ids, ranges - not over row payloads:
       # every start job reads this list again, and it lives in the
-      # parent run's datamodel for the run's whole life.
+      # parent execution's datamodel for the execution's whole life.
       resolve(machine_state.datamodel, path)
     end
   end
@@ -393,13 +396,13 @@ Two config options belong to this half:
 
 | Option | Default | What it is |
 |---|---|---|
-| `:child_starter` | `nil` | the module implementing `StatifierOban.Invoke.ChildStarter` that each start job creates its child through - the seam, because this package creates no runs |
+| `:child_starter` | `nil` | the module implementing `StatifierOban.Invoke.ChildStarter` that each start job creates its child through - the seam, because this package creates no executions |
 | `:max_fan_out` | `1_000` | the cap on a fan-out's width, checked before the first child start; a wider fan-out starts nothing and fails the invocation on `error.communication.invoke.<invoke_id>` with the count and the cap in `detail` |
 
-The seam's callback takes five values - the **parent run id, the effect,
-the index, the count, and an option list** - and must be idempotent on
-`{parent run id, invoke_id, index}`, because a start job is at-least-once
-like every other job here:
+The seam's callback takes five values - the **parent execution id, the
+effect, the index, the count, and an option list** - and must be
+idempotent on `{parent execution id, invoke_id, index}`, because a start
+job is at-least-once like every other job here:
 
 ```elixir
 @impl StatifierOban.Invoke.ChildStarter
@@ -438,7 +441,7 @@ StatifierPersistence.Driver.start_child_at(
 (0-based `index`, `count` = N, `effect` accepted either as the resolved
 `%Statifier.Effect.Invoke{}` or as the whole `{:start_child, ...}`
 instruction, and `opts` the same keyword list this seam is handed). The
-host's module is what holds the driver; a host with its own run store
+host's module is what holds the driver; a host with its own execution store
 wires its own function instead:
 
 ```elixir
@@ -453,10 +456,10 @@ wires its own function instead:
 ```
 
 When a fan-out fails and the remaining children have to be cancelled, the
-children that already exist are cancelled as runs by whoever owns them;
-`StatifierOban.Invoke.FanOut.cancel_unstarted/3` is the other door, for the
-indices whose start job has not run yet and which therefore have no run
-record to cancel.
+children that already exist are cancelled as executions by whoever owns
+them; `StatifierOban.Invoke.FanOut.cancel_unstarted/3` is the other door,
+for the indices whose start job has not run yet and which therefore have
+no execution record to cancel.
 
 ## The contract this package implements
 
@@ -527,7 +530,7 @@ the job row. Whether the write happened and whether it was new (`conflict?`),
 which statechart identity an opaque job row belongs to, the fan-out's own
 dispatch and per-child starts, and the spec-level verdicts that are successes
 for Oban and non-events for the chart - the 6.2 discard of a timer firing into
-a dead run above all.
+a dead execution above all.
 
 Attach to the whole surface without hand-copying names:
 

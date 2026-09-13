@@ -22,13 +22,13 @@ defmodule StatifierOban.Timer.Worker do
   `perform/1` decodes the stored effect and hands it to the job's
   `StatifierOban.Timer.Delivery` module (from the meta written at
   schedule time; absent meta falls back to the documented default,
-  `StatifierOban.Timer.Delivery.Session`), which owes the run-liveness
+  `StatifierOban.Timer.Delivery.Session`), which owes the execution-liveness
   check st-ADR-0054 decision 4 requires before any fired event is fed
   back. The outcomes map onto Oban states so each is observable on the
   job row:
 
   - delivered -> the job completes (`:ok`);
-  - the run is not live -> the job cancels with
+  - the execution is not live -> the job cancels with
     `{:discarded, reason}` recorded, the spec 6.2 discard as data;
   - an undecodable row cancels with `{:undecodable, reason}` - no number
     of retries makes a corrupt row decodable;

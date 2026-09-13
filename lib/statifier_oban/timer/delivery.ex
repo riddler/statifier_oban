@@ -1,6 +1,6 @@
 defmodule StatifierOban.Timer.Delivery do
   @moduledoc """
-  The delivery seam a fired timer job goes through - the run-liveness
+  The delivery seam a fired timer job goes through - the execution-liveness
   check st-ADR-0054 decision 4 requires, plus the feed-back itself.
 
   Spec 6.2 says a delayed send whose session terminated before the delay
@@ -9,18 +9,18 @@ defmodule StatifierOban.Timer.Delivery do
   live timer ref before the process exits; a durable scheduler survives process
   death by design, so nothing plays that role for a stored job. What
   replaces it (st-ADR-0054 decision 4): before feeding the fired event
-  back, the host MUST establish the run is still live and discard
+  back, the host MUST establish the execution is still live and discard
   otherwise. The guarantee is enforced here, at delivery time - a
-  cancel-on-run-end hook may keep the store tidy but is never
+  cancel-on-execution-end hook may keep the store tidy but is never
   load-bearing, because the node death durability exists to survive takes
   the hook down with it.
 
-  Whether a run is live is the host's question, not this package's: a
+  Whether an execution is live is the host's question, not this package's: a
   host running `Statifier.Session` processes answers it from the session
   registry and `Statifier.Session.status/1`
   (`StatifierOban.Timer.Delivery.Session`, the default), while a
   process-less host driving `Statifier.Interpreter` against persisted
-  positions answers it from whatever it stores as the run's
+  positions answers it from whatever it stores as the execution's
   terminated/halted state and feeds the event into its next drive. That
   is why this is a behaviour: `StatifierOban.Config` carries the
   implementation (`:delivery`), and the scheduled job carries it to the
@@ -64,25 +64,26 @@ defmodule StatifierOban.Timer.Delivery do
 
   The default Session delivery reports `:terminated` (no live process) or
   the halted session's own status (`:done`, `:cancelled`,
-  `:budget_exhausted`); a host implementation reports whatever its run
-  store calls the not-live case.
+  `:budget_exhausted`); a host implementation reports whatever its
+  execution store calls the not-live case.
   """
   @type discard_reason :: term()
 
   @doc """
-  Establishes that the run named by `scope` is still live and, only then,
-  feeds the fired event back into it.
+  Establishes that the execution named by `scope` is still live and, only
+  then, feeds the fired event back into it.
 
-  Returns `:delivered` when the event was fed back, or
-  `{:discarded, reason}` when the run is not live and the event was
-  dropped per spec 6.2. "Live" is stricter than "not terminated": a
-  halted run (`:done` and friends) still discards, because an event fed
-  to a halted session just sits queued.
+  Returns `:delivered` when the event was fed back, or `{:discarded,
+  reason}` when the execution is not live and the event was dropped per
+  spec 6.2. "Live" is stricter than "not terminated": a halted execution
+  (`:done` and friends) still discards, because an event fed to a halted
+  session just sits queued.
 
-  A failure that is neither of those - the host's run store unreachable,
-  for example - should raise (or exit) rather than return: the job is
-  retried by Oban, which is the correct response to an environment fact,
-  where a discard is the correct response to a run fact.
+  A failure that is neither of those - the host's execution store
+  unreachable, for example - should raise (or exit) rather than return:
+  the job is retried by Oban, which is the correct response to an
+  environment fact, where a discard is the correct response to an
+  execution fact.
   """
   @callback deliver(scope :: String.t(), effect :: SendDelayed.t()) ::
               :delivered | {:discarded, discard_reason()}
@@ -92,8 +93,8 @@ defmodule StatifierOban.Timer.Delivery do
   it was scheduled under and the effect the job stored.
 
   This mirrors statifier-ex's own `Session.Effects.delivered_event/2` for
-  a fired `target: nil` send, so an event that rejoins a run through a
-  durable job is indistinguishable from one an in-process timer
+  a fired `target: nil` send, so an event that rejoins an execution
+  through a durable job is indistinguishable from one an in-process timer
   delivered:
 
   - `origin` and `origintype` are stamped as the SCXML event processor at
@@ -105,9 +106,9 @@ defmodule StatifierOban.Timer.Delivery do
 
   It is public because every `StatifierOban.Timer.Delivery` owes the same
   event, and a hand-assembled one is where the `caller_context` link
-  quietly goes missing. A host whose run is not a `Statifier.Session`
-  still gets the right event to feed into its next `Statifier.Interpreter`
-  drive.
+  quietly goes missing. A host whose execution is not a
+  `Statifier.Session` still gets the right event to feed into its next
+  `Statifier.Interpreter` drive.
   """
   @spec fired_event(String.t(), SendDelayed.t()) :: Event.t()
   def fired_event(scope, %SendDelayed{} = effect) when is_binary(scope) do

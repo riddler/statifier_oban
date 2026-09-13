@@ -17,7 +17,7 @@ defmodule StatifierOban.Invoke.JobArgs do
     the store during an incident. `invoke_id` is the authored id used
     verbatim, or the deterministic `%MachineState{}` counter,
     st-ADR-0008 (as amended) blesses as the idempotency key; scoping is
-    mandatory because that counter restarts per chart run, and
+    mandatory because that counter restarts per chart execution, and
     `macrostep` is what tells a state re-entry's fresh invocation apart
     from a crash replay of the old one.
   - The three host-opaque fields, `params`, `content` and
@@ -254,7 +254,7 @@ defmodule StatifierOban.Invoke.JobArgs do
   including the two host-opaque payloads, which is the common way a row
   goes bad. This reads only the two plain-string fields that *name* the
   invocation, so a caller holding an otherwise undecodable row can still
-  tell the run which invocation it is about
+  tell the execution which invocation it is about
   (`StatifierOban.Invoke.Worker` delivers `error.communication` that
   way before cancelling). The rules are `to_invoke/1`'s own, because
   this is the same `fetch_binary/2`: a missing, empty, or non-string
