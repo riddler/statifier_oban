@@ -17,7 +17,7 @@ defmodule StatifierOban.SelfCancellingDelivery do
   delivery get killed by its own cancel.
 
   Test-only. The config and the test's pid travel through
-  `:persistent_term` under the run's scope, because the delivery
+  `:persistent_term` under the execution's scope, because the delivery
   behaviour deliberately hands an implementation only the scope and the
   effect.
   """
