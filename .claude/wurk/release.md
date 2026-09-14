@@ -137,14 +137,14 @@ Three things about this pin that a release here has to know:
   else in this section changes with the form - only the string written. (The
   snippet carried the patch-dropped form, and this section described it as
   such, until 2026-09-13 on `sob-aze`.)
-- **The format precedent is `b58fb95` for the pin's shape, and the reference
-  prep for the move.** `b58fb95` (the 0.2.1 docs pass) moved the pin from
-  `~> 0.1` to `~> 0.2` and recorded that in the 0.2.1 changelog as a fix; for
-  a long time no release prep had moved it at all, which is what that
-  precedent was here to cover. Preps now move it themselves, so the skill's
-  "check a previous release commit rather than inventing the format" step
-  reads against the reference prep resolved at the top of this file, with
-  `b58fb95` as the older fallback.
+- **The format precedent is `b58fb95` for the move; the form is the bullet
+  above.** `b58fb95` (the 0.2.1 docs pass) moved the pin from `~> 0.1` to
+  `~> 0.2` and recorded that in the 0.2.1 changelog as a fix; for a long time
+  no release prep had moved it at all, which is what that precedent was here
+  to cover. Preps now move it themselves, so the skill's "check a previous
+  release commit rather than inventing the format" step reads against the
+  reference prep resolved at the top of this file, with `b58fb95` as the older
+  fallback.
 - **The pin's current value is not written down here**, for the same reason no
   current version is. Read it and check it against the version file instead:
 
