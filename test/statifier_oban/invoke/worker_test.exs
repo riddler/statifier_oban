@@ -288,7 +288,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
   # sabotage: `Delivery.Session.deliver_if_running/3`'s halted arm
   # returned :delivered - went red ({:discarded, :done} stopped coming
   # back), reverted.
-  test "the default delivery discards against a halted run, with the halt as the reason" do
+  test "the default delivery discards against a halted execution, with the halt as the reason" do
     chart = """
     <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="end_state">
         <final id="end_state"/>
@@ -306,7 +306,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
 
   # sabotage: `Delivery.Session.deliver/3`'s empty-lookup arm returned
   # :delivered - went red, reverted.
-  test "the default delivery discards against a run that no longer exists" do
+  test "the default delivery discards against an execution that no longer exists" do
     assert {:discarded, :terminated} =
              Delivery.Session.deliver("sess_iw_never_lived", "inv_x", nil)
   end
@@ -341,7 +341,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
   # sabotage: `maybe_fail/6`'s catch-all clause was made to deliver too -
   # went red (the retryable attempt told the execution about a failure
   # it would retry), reverted.
-  test "a failure with retries left tells the run nothing" do
+  test "a failure with retries left tells the execution nothing" do
     Process.register(self(), :invoke_worker_test_listener)
 
     insert!(args_for("sess_iw_retrying", "inv_retrying", FailingRunHandler),
@@ -400,7 +400,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
   # sabotage: `Delivery.Session.deliver_failure/3` was pointed at
   # `if_running/2`'s success path unconditionally - went red (a dead
   # execution reported :delivered), reverted.
-  test "the default delivery discards a failure against a run that no longer exists" do
+  test "the default delivery discards a failure against an execution that no longer exists" do
     assert {:discarded, :terminated} =
              Delivery.Session.deliver_failure("sess_iw_never_lived", "inv_x",
                reason: "run_failed",
@@ -412,7 +412,7 @@ defmodule StatifierOban.Invoke.WorkerTest do
   # sabotage: `deliver_if_running/2`'s halted arm returned :delivered -
   # went red for the failure door exactly as it does for the done door,
   # reverted.
-  test "the default delivery discards a failure against a halted run" do
+  test "the default delivery discards a failure against a halted execution" do
     chart = """
     <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="end_state">
         <final id="end_state"/>

@@ -192,7 +192,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
   # sabotage: `Invoke.Worker.maybe_fail/6`'s delivering clause was
   # removed - went red (the session sat in `capturing` until wait_until
   # gave up), reverted.
-  test "acceptance: an invocation that exhausts its retries parks the run in its recovery state" do
+  test "acceptance: an invocation that exhausts its retries parks the execution in its recovery state" do
     {:ok, machine} = Statifier.compile(@failure_chart)
 
     {:ok, session} =
@@ -245,7 +245,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
   # sabotage: `StatifierOban.Invoke.Worker`'s `{:discarded, reason}` arm
   # returned :ok - went red (the job completed instead of cancelling),
   # reverted.
-  test "a completed invoke against a dead run is discarded the same way a fired timer is" do
+  test "a completed invoke against a dead execution is discarded the same way a fired timer is" do
     ctx = ctx_for("sess_invoke_gone")
 
     assert :ok = Handler.perform(TestInvokeHandler, {:start, invoke_fixture("inv_dead")}, ctx)
