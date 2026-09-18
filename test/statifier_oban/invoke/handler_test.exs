@@ -186,7 +186,7 @@ defmodule StatifierOban.Invoke.HandlerTest do
 
   # The end-to-end counterpart of the acceptance test above, for the
   # failure door (ADR-0005, st-ADR-0068): a real chart, a real session, a
-  # real Oban job exhausting its retries, and the run leaving the
+  # real Oban job exhausting its retries, and the execution leaving the
   # invoking state on its own.
   #
   # sabotage: `Invoke.Worker.maybe_fail/6`'s delivering clause was

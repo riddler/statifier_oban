@@ -369,7 +369,8 @@ defmodule StatifierOban.Invoke.FanOutTest do
 
   # Both halves of the match are load-bearing: the state filter keeps an
   # invocation whose starts already ran out of the sweep, and the
-  # invoke_id filter keeps a sibling invocation in the same run out of it.
+  # invoke_id filter keeps a sibling invocation in the same execution
+  # out of it.
   #
   # sabotage: `start_jobs/2` dropped the `state in CancellableStates`
   # clause - went red (the count came back 9 and the completed rows read
@@ -641,9 +642,9 @@ defmodule StatifierOban.Invoke.FanOutTest do
   # The acceptance criterion for this seam, in the form this package can
   # check: the number on the event is the number of start jobs the sweep
   # actually moved to `cancelled`. The other half of `sb-ADR-0009`
-  # decision 6's cancel - the siblings that already have a child run - is
-  # the settlement side's, and adding the two is what matches the run's
-  # cancelled entries.
+  # decision 6's cancel - the siblings that already have a child
+  # execution - is the settlement side's, and adding the two is what
+  # matches the execution's cancelled entries.
   #
   # sabotage: `cancel_unstarted/3` emitted a hardcoded `0` rather than the
   # sweep's own count - went red (three rows read `cancelled` while the

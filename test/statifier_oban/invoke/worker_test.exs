@@ -99,7 +99,8 @@ defmodule StatifierOban.Invoke.WorkerTest do
   end
 
   # The run-keyed handler shape sob-7b1 exists for: work that has to know
-  # which run it is working for, written against the base as shipped.
+  # which execution it is working for, written against the base as
+  # shipped.
   defmodule RunKeyedHandler do
     @moduledoc false
     use StatifierOban.Invoke.Handler
@@ -338,8 +339,8 @@ defmodule StatifierOban.Invoke.WorkerTest do
   end
 
   # sabotage: `maybe_fail/6`'s catch-all clause was made to deliver too -
-  # went red (the retryable attempt told the run about a failure it would
-  # retry), reverted.
+  # went red (the retryable attempt told the execution about a failure
+  # it would retry), reverted.
   test "a failure with retries left tells the run nothing" do
     Process.register(self(), :invoke_worker_test_listener)
 
@@ -397,8 +398,8 @@ defmodule StatifierOban.Invoke.WorkerTest do
   end
 
   # sabotage: `Delivery.Session.deliver_failure/3` was pointed at
-  # `if_running/2`'s success path unconditionally - went red (a dead run
-  # reported :delivered), reverted.
+  # `if_running/2`'s success path unconditionally - went red (a dead
+  # execution reported :delivered), reverted.
   test "the default delivery discards a failure against a run that no longer exists" do
     assert {:discarded, :terminated} =
              Delivery.Session.deliver_failure("sess_iw_never_lived", "inv_x",
@@ -481,8 +482,8 @@ defmodule StatifierOban.Invoke.WorkerTest do
 
     assert %{cancelled: 1, failure: 0, success: 0} = drain()
 
-    # No scope means no run to name, so there is no door to call - and
-    # reaching for one anyway would be a delivery to nowhere.
+    # No scope means no execution to name, so there is no door to call -
+    # and reaching for one anyway would be a delivery to nowhere.
     refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
 
     assert %Oban.Job{state: "cancelled", errors: [%{"error" => error}]} =
