@@ -56,8 +56,8 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
   end
 
   # sabotage: `perform/1`'s `with` pattern bound the decoded handler name
-  # to `scope` - went red (the recorded parent run id was the handler
-  # module's string), reverted.
+  # to `scope` - went red (the recorded parent execution id was the
+  # handler module's string), reverted.
   test "the seam is handed the parent run id and the effect the planning callback saw" do
     insert!("sess_cs_ok", "inv_cs_ok", 1, 4, OkStarter)
 

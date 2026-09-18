@@ -1,6 +1,6 @@
 defmodule StatifierOban.Invoke.HandlerResolutionTest do
   # Where a *second* invoke's handler comes from, when the first one's
-  # answer transitions the run into another invoking state.
+  # answer transitions the execution into another invoking state.
   #
   # The reported shape (sob-8pu): a host passing handlers "per delivery"
   # got `error.execution` on every second step. This module pins the
@@ -8,11 +8,11 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
   # not say it out loud: nothing on the delivery seam, and nothing on the
   # job row, chooses a handler for an `<invoke>` that has not been
   # planned yet. The choice is made once per drive, by the engine, out of
-  # the run's own `:invoke_handlers` registry (st-ADR-0051 decision 4,
-  # `Statifier.Session.Effects.plan/2`). What this package's job row
-  # carries is the module that lookup *already* returned.
+  # the execution's own `:invoke_handlers` registry (st-ADR-0051
+  # decision 4, `Statifier.Session.Effects.plan/2`). What this package's
+  # job row carries is the module that lookup *already* returned.
   #
-  # The two tests differ in exactly one variable - what the run's
+  # The two tests differ in exactly one variable - what the execution's
   # registry holds - and the delivery module is the same host-supplied
   # one in both, which is what refutes "the delivery resolves handlers".
   #
@@ -65,7 +65,7 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
     a session, and it exists to make the point structurally: the
     behaviour has two doors, both about *this* completed invocation, and
     neither of them is handed - or could be handed - a handler map for
-    the invocations a run has not planned yet.
+    the invocations an execution has not planned yet.
     """
 
     @behaviour StatifierOban.Invoke.Delivery
@@ -154,8 +154,8 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
     assert delivery == Atom.to_string(HostDelivery)
 
     # Running it delivers `done.invoke.inv_signup` through the
-    # host-supplied seam, which drives the run into `capturing` - and
-    # that drive is what plans the second `<invoke>`.
+    # host-supplied seam, which drives the execution into `capturing` -
+    # and that drive is what plans the second `<invoke>`.
     drain()
     assert [%Oban.Job{state: "completed"}] = stored_jobs(scope, "inv_signup")
 
@@ -164,7 +164,7 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
     # The headline: the second job names the *second* handler. Nothing on
     # the delivery seam said so - `HostDelivery` is identical in both
     # steps and holds no map - and nothing on the first job's row said so
-    # either. The registry the run was started with did.
+    # either. The registry the execution was started with did.
     assert [%Oban.Job{args: %{"handler" => capture_handler}, meta: %{"delivery" => ^delivery}}] =
              stored_jobs(scope, "inv_capture")
 
@@ -181,9 +181,10 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
   # asserts an *absence* on this package's side (no second job) and an
   # upstream plan-time refusal - so the mutation is the one variable it
   # controls: the registry below was widened to the passing test's, and
-  # it went red for the right reason (the run reached `active`, never
-  # `misconfigured`), then reverted. Nothing in `lib/` can turn it red,
-  # which is itself the finding: the failure is upstream of this package.
+  # it went red for the right reason (the execution reached `active`,
+  # never `misconfigured`), then reverted. Nothing in `lib/` can turn it
+  # red, which is itself the finding: the failure is upstream of this
+  # package.
   test "a run whose registry lacks the second type gets error.execution on the second step, through the same delivery" do
     {:ok, session} =
       Statifier.Session.start_link(machine(),
@@ -198,10 +199,10 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
 
     # The reported symptom, reproduced: the first step is fine, the
     # answer arrives, and the second `<invoke>` raises `error.execution`
-    # at plan time because its type is unregistered in *this* run's
-    # registry. `HostDelivery` is byte-identical to the passing test's,
-    # which is what places the fault in the registry rather than in the
-    # seam.
+    # at plan time because its type is unregistered in *this*
+    # execution's registry. `HostDelivery` is byte-identical to the
+    # passing test's, which is what places the fault in the registry
+    # rather than in the seam.
     wait_until(fn ->
       Statifier.Session.status(session).configuration == MapSet.new(["misconfigured"])
     end)

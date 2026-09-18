@@ -33,9 +33,9 @@ defmodule StatifierOban.Invoke.SelfCancelTest do
 
   defmodule Delivery do
     @moduledoc false
-    # The run-liveness seam, stubbed: there is no live session here, and
-    # the default `Delivery.Session` would discard every completion and
-    # cancel the row we are asserting about.
+    # The execution-liveness seam, stubbed: there is no live session
+    # here, and the default `Delivery.Session` would discard every
+    # completion and cancel the row we are asserting about.
     @behaviour StatifierOban.Invoke.Delivery
 
     @impl StatifierOban.Invoke.Delivery
