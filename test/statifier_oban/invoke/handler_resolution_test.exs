@@ -135,7 +135,7 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
   # signup job's row named the pinned module, not `SignupHandler`),
   # reverted. That is the `lib/` behaviour this test owns: recording the
   # module the engine's lookup already chose.
-  test "the second invoke's handler is resolved from the run's registry and written onto its job row" do
+  test "the second invoke's handler is resolved from the execution's registry and written onto its job row" do
     {:ok, session} =
       Statifier.Session.start_link(machine(),
         invoke_handlers: %{@signup_type => SignupHandler, @capture_type => CaptureHandler}
@@ -185,7 +185,7 @@ defmodule StatifierOban.Invoke.HandlerResolutionTest do
   # never `misconfigured`), then reverted. Nothing in `lib/` can turn it
   # red, which is itself the finding: the failure is upstream of this
   # package.
-  test "a run whose registry lacks the second type gets error.execution on the second step, through the same delivery" do
+  test "an execution whose registry lacks the second type gets error.execution on the second step, through the same delivery" do
     {:ok, session} =
       Statifier.Session.start_link(machine(),
         invoke_handlers: %{@signup_type => SignupHandler}

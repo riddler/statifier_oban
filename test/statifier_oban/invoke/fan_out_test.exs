@@ -435,7 +435,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
 
   # sabotage: `ChildStartWorker.start/6` passed `count` where `index`
   # goes - went red (the recorded indices came back [3, 3, 3]), reverted.
-  test "each start job calls the seam with the parent run, the effect, its index and the count" do
+  test "each start job calls the seam with the parent execution, the effect, its index and the count" do
     insert_fan_out!("sess_fo_seam", "inv_seam", ["a", "b", "c"])
     assert %{success: 1} = drain()
     assert %{success: 3} = drain()
