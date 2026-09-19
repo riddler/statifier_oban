@@ -29,7 +29,7 @@ defmodule StatifierOban.Timer.KeyPropertyTest do
     end
   end
 
-  describe "scope separates runs" do
+  describe "scope separates executions" do
     # sabotage: changed the `validated_scope/1` success clause to return
     # `{:ok, "fixed"}` instead of `{:ok, scope}` - property went red (two
     # distinct scopes produced equal dedup keys), reverted. Verified for

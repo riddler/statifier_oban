@@ -45,7 +45,7 @@ defmodule StatifierOban.Timer.WorkerTest do
   # sabotage: perform's :delivered clause returned {:cancel, :nope} - went
   # red (success: 0, cancelled: 1, and the session never left "a"),
   # reverted.
-  test "a fired job delivers into the live run and the job completes",
+  test "a fired job delivers into the live execution and the job completes",
        %{config: config, queue: queue, scope: scope} do
     pid = start_session!(@live_chart, scope)
     assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope, fired_fixture())
@@ -59,7 +59,7 @@ defmodule StatifierOban.Timer.WorkerTest do
 
   # sabotage: perform's {:discarded, reason} clause returned :ok - went
   # red (the job completed instead of cancelling), reverted.
-  test "a fired job against a dead run discards: cancelled, not crashed",
+  test "a fired job against a dead execution discards: cancelled, not crashed",
        %{config: config, queue: queue, scope: scope} do
     assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope, fired_fixture())
 
