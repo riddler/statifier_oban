@@ -142,7 +142,7 @@ defmodule StatifierOban.TimerTest do
   # went red (drain reported success: 1, cancelled: 0), reverted.
   # No session runs under this scope, so the fired job discards through
   # the run-liveness check (delivery itself is WorkerTest's ground).
-  test "a fired job with no live run discards; replay stays a no-op",
+  test "a fired job with no live execution discards; replay stays a no-op",
        %{config: config, queue: queue, scope_a: scope_a} do
     effect = %{send_delayed_fixture() | delay_ms: 0}
 

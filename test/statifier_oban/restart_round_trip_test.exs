@@ -139,7 +139,7 @@ defmodule StatifierOban.RestartRoundTripTest do
   # sabotage: Delivery.Session's empty-lookup clause returned :delivered -
   # went red here (the drain completed the job instead of cancelling it,
   # and the row carried no discard) - reverted.
-  test "schedule -> restart without resuming the run: discarded, as data on the row",
+  test "schedule -> restart without resuming the execution: discarded, as data on the row",
        %{queue: queue, scope: scope, before: config_before} do
     start_session!(scope)
 

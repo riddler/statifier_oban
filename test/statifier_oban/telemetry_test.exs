@@ -246,7 +246,7 @@ defmodule StatifierOban.TelemetryTest do
   # sabotage: `Timer.Worker.perform/1`'s `:delivered` arm emitted the
   # :discarded event instead - went red (no :fired event arrived),
   # reverted.
-  test "a fired job delivering into a live run emits :fired",
+  test "a fired job delivering into a live execution emits :fired",
        %{timers_queue: queue, scope: scope} do
     {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue)
     start_session!(@live_chart, scope)
@@ -275,7 +275,7 @@ defmodule StatifierOban.TelemetryTest do
   # hardcoded `:delivered` where the seam's own verdict belongs - went
   # red (`:terminated` was expected), reverted. This is the spec 6.2 drop
   # as data, the thing Oban buries inside `:result`.
-  test "a fired job against a dead run emits :discarded with the seam's reason",
+  test "a fired job against a dead execution emits :discarded with the seam's reason",
        %{timers_queue: queue, scope: scope} do
     {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue)
 
@@ -406,7 +406,7 @@ defmodule StatifierOban.TelemetryTest do
 
   # sabotage: `execute/5`'s `:delivered` arm emitted the :discarded event
   # instead - went red (no :delivered event arrived), reverted.
-  test "a completed invocation delivered into a live run emits :delivered",
+  test "a completed invocation delivered into a live execution emits :delivered",
        %{queue: queue, scope: scope} do
     job =
       insert_invoke!(queue, scope, "inv_tel_delivered", TestInvokeHandler,
@@ -432,7 +432,7 @@ defmodule StatifierOban.TelemetryTest do
   # sabotage: `execute/5`'s `{:discarded, reason}` arm passed `nil` where
   # the seam's own verdict belongs - went red (`:terminated` was
   # expected), reverted.
-  test "a completed invocation against a dead run emits :discarded",
+  test "a completed invocation against a dead execution emits :discarded",
        %{queue: queue, scope: scope} do
     job = insert_invoke!(queue, scope, "inv_tel_discarded", TestInvokeHandler)
 
