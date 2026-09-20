@@ -10,6 +10,12 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.11.0] 2026-09-19
+
+### Added
+
+- `StatifierOban.Timer.pending_for/2` counts the timers still pending under each of a list of scopes, answering every scope asked for.
+
 ## [0.10.0] 2026-09-12
 
 ### Changed
