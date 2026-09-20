@@ -523,9 +523,16 @@ defmodule MyApp.DurableTimerDelivery do
       {:discarded, %{status: status}} ->
         {:discarded, status}
 
+      {:error, :execution_not_found} ->
+        # The durable analogue of the default's empty registry lookup:
+        # the store answered, and its answer is that there is no such
+        # execution. A spec 6.2 discard, not an environment fact.
+        {:discarded, :terminated}
+
       {:error, reason} ->
-        # Not a discard: the store said nothing about this execution's
-        # liveness, so the job must retry rather than drop the event.
+        # What remains leaves this execution's liveness unanswered - an
+        # unreachable repo, a position that will not decode - so the job
+        # must retry rather than drop the event.
         raise "stepping #{execution_id} failed: #{inspect(reason)}"
     end
   end
@@ -534,7 +541,13 @@ end
 
 `step/5` is the liveness check and the delivery in one call: it reads the
 execution record first and answers `{:discarded, execution}` for a terminal
-one, which is why the module above reads no status of its own. The chart the
+one, which is why the module above reads no status of its own. The one
+liveness fact `step/5` reports as an error rather than a discard is
+`{:error, :execution_not_found}` - a not-found arm every storage adapter in
+that package must return - and the module above maps it back onto the
+terminated discard, because an execution the store does not hold is exactly
+what an empty registry lookup means for the default. Every other error is
+left to raise, which is what puts the job back in Oban's hands. The chart the
 execution runs is the host's to resolve - this package stores no chart
 identity on a timer job - hence `machine_for!/1`.
 
