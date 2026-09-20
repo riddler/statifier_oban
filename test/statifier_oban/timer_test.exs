@@ -6,7 +6,7 @@ defmodule StatifierOban.TimerTest do
   import Ecto.Query, only: [from: 2]
 
   alias Statifier.Effect.{Cancel, SendDelayed}
-  alias StatifierOban.{Config, TestRepo, Timer}
+  alias StatifierOban.{Config, TestRepo, TestWorker, Timer}
   alias StatifierOban.TestCodecs.{Boom, NondeterministicXor, Xor}
   alias StatifierOban.Timer.JobArgs
 
@@ -296,6 +296,120 @@ defmodule StatifierOban.TimerTest do
              Timer.schedule(config, scope_a, effect)
 
     assert job_count(queue) == 0
+  end
+
+  describe "pending_for/2" do
+    # sabotage: `group_by([j], j.args["scope"])` was changed to
+    # `group_by([j], j.worker)` - went red: every row collapsed into one
+    # group, so one arbitrary scope of the group came back carrying the
+    # whole total (3) and the other came back at its zero, instead of 2
+    # and 1. Reverted.
+    test "each scope is answered with its own pending count",
+         %{config: config, scope_a: scope_a, scope_b: scope_b} do
+      effect = send_delayed_fixture()
+
+      assert {:ok, _job} = Timer.schedule(config, scope_a, effect)
+      assert {:ok, _job} = Timer.schedule(config, scope_a, %{effect | ordinal: 2})
+      assert {:ok, _job} = Timer.schedule(config, scope_b, effect)
+
+      assert Timer.pending_for(config, [scope_a, scope_b]) == %{scope_a => 2, scope_b => 1}
+    end
+
+    # sabotage: `zeros` was replaced with `%{}` so the reduce started
+    # empty - went red here (scope_b vanished from the answer instead of
+    # coming back at 0), and red in the two tests below that ask only
+    # about a scope with no pending timer, which got `%{}` for the same
+    # reason. Reverted.
+    test "a scope with no pending timer comes back at zero rather than missing",
+         %{config: config, scope_a: scope_a, scope_b: scope_b} do
+      assert {:ok, _job} = Timer.schedule(config, scope_a, send_delayed_fixture())
+
+      assert Timer.pending_for(config, [scope_a, scope_b]) == %{scope_a => 1, scope_b => 0}
+      assert Timer.pending_for(config, []) == %{}
+    end
+
+    # sabotage: the `j.state in ^CancellableStates.list()` clause was
+    # dropped from `pending_counts/1` - went red: the cancelled and the
+    # completed rows counted too and the answer was 3. Reverted.
+    test "a completed timer and a cancelled timer are not pending",
+         %{config: config, scope_a: scope_a} do
+      effect = send_delayed_fixture()
+
+      assert {:ok, %Oban.Job{id: completed_id}} = Timer.schedule(config, scope_a, effect)
+
+      assert {:ok, _job} =
+               Timer.schedule(config, scope_a, %{effect | send_id: "send_2", ordinal: 2})
+
+      assert {:ok, _job} =
+               Timer.schedule(config, scope_a, %{effect | send_id: "send_3", ordinal: 3})
+
+      # `send_2` leaves through the real cancel door. Nothing here can
+      # complete a timer - a fired timer with no live session discards -
+      # so the completed row is written directly.
+      assert {:ok, 1} = Timer.cancel(config, scope_a, %{cancel_fixture() | send_id: "send_2"})
+
+      assert {1, _returned} =
+               TestRepo.update_all(
+                 from(j in Oban.Job, where: j.id == ^completed_id),
+                 set: [state: "completed"]
+               )
+
+      assert Timer.pending_for(config, [scope_a]) == %{scope_a => 1}
+    end
+
+    # sabotage: `pending_counts/1`'s `j.worker == ^worker` clause was
+    # widened to match any worker - went red: the foreign scheduled job
+    # counted and the answer was 1 instead of 0. Reverted.
+    test "a job of another worker under the same scope is not a pending timer",
+         %{config: config, queue: queue, scope_a: scope_a} do
+      assert {:ok, _job} =
+               Oban.insert(
+                 @oban_name,
+                 TestWorker.new(%{"scope" => scope_a},
+                   queue: queue,
+                   scheduled_at: DateTime.add(DateTime.utc_now(), 3_600, :second)
+                 )
+               )
+
+      assert Timer.pending_for(config, [scope_a]) == %{scope_a => 0}
+    end
+
+    # The Lite engine forces `prefix: false` (Oban.Config.new/1), so this
+    # suite cannot vary a prefix and watch it travel. What it can pin is
+    # the route that applies one: the count goes through `Oban.Repo` with
+    # the instance's own `Oban.config/1`, which is where the prefix, the
+    # repo and the log setting come from. A query issued against the repo
+    # module directly carries no `oban_conf`.
+    #
+    # sabotage: `Oban.Repo.all(conf, query)` was replaced with
+    # `conf.repo.all(query)` - went red: the query telemetry arrived with
+    # empty options and `oban_conf` was nil. A second mutation, dropping
+    # `@scope_chunk` to 1, went red on the refute below: two scopes
+    # became two queries. Both reverted.
+    test "two scopes are one grouped query, issued through Oban.Repo on the instance's own config",
+         %{config: config, scope_a: scope_a, scope_b: scope_b} do
+      handler_id = "sob-6jw-#{:erlang.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:statifier_oban, :test_repo, :query],
+        &__MODULE__.relay_query_options/4,
+        self()
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      assert Timer.pending_for(config, [scope_a, scope_b]) == %{scope_a => 0, scope_b => 0}
+
+      assert_received {:repo_query, options}
+      assert Keyword.get(options, :oban_conf) == Oban.config(@oban_name)
+      refute_received {:repo_query, _second}
+    end
+  end
+
+  @doc false
+  def relay_query_options(_event, _measurements, metadata, parent) do
+    send(parent, {:repo_query, metadata.options})
   end
 
   defp cancel_fixture do

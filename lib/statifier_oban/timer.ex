@@ -31,13 +31,31 @@ defmodule StatifierOban.Timer do
   (`StatifierOban.OpaqueTerm`'s `"codec"` tag), so the worker that later
   decodes the fired job needs no configuration of its own - it reads
   whatever tag the row carries.
+
+  `scope` is the one argument that decides what any answer here is about.
+  It is `ctx.session_id` for a live session and the host's own durable
+  execution id for a process-less host (`StatifierOban.Timer.Key`), and
+  `pending_for/2` reads the same scopes back: handed durable execution
+  ids it answers how many timers each execution is still waiting on,
+  which is the question a host asks when something durable has to know
+  whether an execution has outstanding work. Handed a live session's
+  scope it answers about that session, which lasts as long as the
+  session does.
   """
 
-  import Ecto.Query, only: [where: 3]
+  import Ecto.Query, only: [group_by: 3, select: 3, where: 3]
 
   alias Statifier.Effect.{Cancel, SendDelayed}
   alias StatifierOban.{CancellableStates, Config, Telemetry}
   alias StatifierOban.Timer.{CancellationKey, JobArgs, Key, Worker}
+
+  # One grouped query carries one bind parameter per scope, plus the
+  # worker and the cancellable states. 500 keeps a single query's
+  # parameter count around 505, inside the 999-parameter ceiling of the
+  # oldest SQLite builds the Lite engine runs on and far inside what
+  # Postgres and MySQL allow, so the chunk is sized by the tightest
+  # supported backend rather than by the caller's list.
+  @scope_chunk 500
 
   @typedoc "Why a SendDelayed effect could not be scheduled."
   @type schedule_error ::
@@ -159,6 +177,61 @@ defmodule StatifierOban.Timer do
       Telemetry.timer_cancelled(scope, effect, count)
       {:ok, count}
     end
+  end
+
+  @doc """
+  Counts the timer jobs still pending under each of `scopes`.
+
+  Answers a map carrying every requested scope, `0` for a scope with no
+  pending timer, so a caller never has to tell "no timers" from "scope
+  absent from the answer". Only this package's own timer jobs are
+  counted, and only in the states a timer that has not fired can be in -
+  `StatifierOban.CancellableStates`, the same set `cancel/3` sweeps. A
+  timer that already fired, was cancelled, or is running its delivery
+  right now is not pending and does not count; `executing` is out here
+  for the same reason it is out of a cancel.
+
+  The scopes are the scopes `schedule/3` was given. A process-less host
+  passes its own durable execution ids and reads back how many timers
+  each execution is still waiting on. A live session passes
+  `ctx.session_id`, which addresses a running session rather than
+  anything durable, so the count it reads back lives and dies with that
+  session.
+
+  No job row is loaded: the count is a grouped count run through
+  `Oban.Repo` on the instance's own `Oban.config/1`, so the repo, the
+  prefix and the log setting are the host instance's rather than
+  anything this package configures. A scopes list longer than the chunk
+  size is counted in several such queries and the counts merged;
+  duplicate scopes are asked once.
+  """
+  @spec pending_for(Config.t(), [Key.scope()]) :: %{Key.scope() => non_neg_integer()}
+  def pending_for(%Config{} = config, scopes) when is_list(scopes) do
+    conf = Oban.config(config.oban)
+    zeros = Map.new(scopes, &{&1, 0})
+
+    scopes
+    |> Enum.uniq()
+    |> Enum.chunk_every(@scope_chunk)
+    |> Enum.reduce(zeros, fn chunk, counted ->
+      chunk
+      |> pending_counts()
+      |> then(&Oban.Repo.all(conf, &1))
+      |> Map.new()
+      |> then(&Map.merge(counted, &1))
+    end)
+  end
+
+  @spec pending_counts([Key.scope()]) :: Ecto.Query.t()
+  defp pending_counts(scopes) do
+    worker = Oban.Worker.to_string(Worker)
+
+    Oban.Job
+    |> where([j], j.worker == ^worker)
+    |> where([j], j.state in ^CancellableStates.list())
+    |> where([j], j.args["scope"] in ^scopes)
+    |> group_by([j], j.args["scope"])
+    |> select([j], {j.args["scope"], count(j.id)})
   end
 
   # The states a timer that has not fired can be in, intersected with

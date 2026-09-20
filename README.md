@@ -486,6 +486,53 @@ this package can promise:
 `<send delay="...">` inside a `<foreach>` is fully supported and the old
 leave-the-id-off guidance is retired.)
 
+## Timers as a chart pin source
+
+Before `statifier_persistence` retires a chart it asks whether anything still
+pins it, and its `StatifierPersistence.PinSource` behaviour is how a host
+answers for state that package cannot see. A pending timer is exactly that
+kind of state: a row in the host's own Oban table, in a package the
+persistence package does not depend on.
+
+Neither package depends on the other and nothing below ships in either of
+them. The adapter is the host's own module:
+
+```elixir
+defmodule MyApp.TimerPins do
+  @behaviour StatifierPersistence.PinSource
+
+  @impl true
+  def pins(_content_hash, %{execution_ids: execution_ids}) do
+    pending =
+      MyApp.statifier_oban_config()
+      |> StatifierOban.Timer.pending_for(execution_ids)
+      |> Map.values()
+      |> Enum.sum()
+
+    %{timers: pending}
+  end
+end
+```
+
+The context's `:execution_ids` are the executions still active on the chart,
+and for a process-less host those ids are the very scopes its timers were
+scheduled under - which is why they can go straight to `pending_for/2`. A
+host that schedules under a live session's id is scoping by session rather
+than by execution and needs a different adapter; `StatifierOban.Timer.Key`
+is where that choice was made.
+
+The content hash goes unused here. No chart identity travels on a timer job:
+the args carry the scope and the send, so this package cannot answer a
+question asked by hash. The hash still reaches every source because other
+sources are answerable by it.
+
+A source that cannot answer raises, and the behaviour turns a raise into a
+refusal rather than a zero - "no pending timers" and "I could not count"
+must not collapse into one answer when a retirement hangs on the difference.
+So the adapter above rescues nothing: an unreachable repo makes
+`pending_for/2` raise, and the retirement is refused instead of granted on a
+count nobody took.
+
 ## Sensitive values in job args
 
 The five host-opaque job-arg fields (a timer's `data` and `caller_context`,
