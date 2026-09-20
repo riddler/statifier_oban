@@ -486,6 +486,75 @@ this package can promise:
 `<send delay="...">` inside a `<foreach>` is fully supported and the old
 leave-the-id-off guidance is retired.)
 
+## Delivering timers to a durable execution
+
+The default delivery, `StatifierOban.Timer.Delivery.Session`, establishes
+liveness by looking the scope up in `Statifier.Registry` and discards when
+the lookup is empty. A host whose executions are durable - stored positions
+driven through `Statifier.Interpreter`, with no session process - has no
+registry entry for any of them, so under the default **every** timer it
+schedules is discarded as `:terminated` when it fires. Such a host owes its
+own `StatifierOban.Timer.Delivery`; the behaviour's moduledoc states the
+contract, and nothing below ships in this package.
+
+Neither package depends on the other. The adapter is the host's own module:
+
+```elixir
+defmodule MyApp.DurableTimerDelivery do
+  @behaviour StatifierOban.Timer.Delivery
+
+  alias Statifier.Effect.SendDelayed
+  alias StatifierOban.Timer.Delivery
+
+  @impl StatifierOban.Timer.Delivery
+  def deliver(execution_id, %SendDelayed{} = effect) do
+    event = Delivery.fired_event(execution_id, effect)
+
+    case StatifierPersistence.Executions.step(
+           MyApp.store(),
+           execution_id,
+           MyApp.machine_for!(execution_id),
+           event,
+           executor: MyApp.Executor
+         ) do
+      {:ok, _execution, _machine_state} ->
+        :delivered
+
+      {:discarded, %{status: status}} ->
+        {:discarded, status}
+
+      {:error, reason} ->
+        # Not a discard: the store said nothing about this execution's
+        # liveness, so the job must retry rather than drop the event.
+        raise "stepping #{execution_id} failed: #{inspect(reason)}"
+    end
+  end
+end
+```
+
+`step/5` is the liveness check and the delivery in one call: it reads the
+execution record first and answers `{:discarded, execution}` for a terminal
+one, which is why the module above reads no status of its own. The chart the
+execution runs is the host's to resolve - this package stores no chart
+identity on a timer job - hence `machine_for!/1`.
+
+The one config line that selects it is the `:delivery` seam:
+
+```elixir
+{:ok, config} =
+  StatifierOban.Config.new(
+    oban: MyApp.Oban,
+    timers_queue: :statifier_timers,
+    delivery: MyApp.DurableTimerDelivery
+  )
+```
+
+`StatifierOban.Timer.schedule/3` writes that module onto the job's meta, and
+the timer worker (`StatifierOban.Timer.Worker`) reads it back: absent meta falls back
+to the documented default. So the seam is chosen per config at schedule time
+and travels with the job - a host that changes it does not re-key jobs
+already stored, because the unique fields exclude the meta on purpose.
+
 ## Timers as a chart pin source
 
 Before `statifier_persistence` retires a chart it asks whether anything still
