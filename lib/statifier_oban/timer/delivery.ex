@@ -26,6 +26,34 @@ defmodule StatifierOban.Timer.Delivery do
   implementation (`:delivery`), and the scheduled job carries it to the
   worker.
 
+  ## The contract for a process-less durable host
+
+  A host whose executions are stored rather than run as processes - one
+  driving `Statifier.Interpreter` against persisted positions - owes
+  this behaviour an implementation, because the default discards every
+  one of its timers: a durable execution registers no process, so
+  `StatifierOban.Timer.Delivery.Session`'s registry lookup is empty and
+  the fired event is dropped as `:terminated`. The contract such an
+  implementation works to is three sentences:
+
+  1. **The scope is the host's execution id.** It is the id the timer
+     was scheduled under (`StatifierOban.Timer.Key`) and the id the
+     stored execution is read and stepped by, not a session id.
+  2. **Liveness is the execution's stored status.** Only an active
+     execution takes the event; a finished one answers `{:discarded,
+     status}`, with the store's own word for the status - the same
+     "live is stricter than not terminated" rule the default applies
+     through `Statifier.Session.status/1`.
+  3. **Delivery is a step of the execution with the event
+     `fired_event/2` builds**, and it is safe to retry: the job's dedup
+     key already is (`StatifierOban.Timer.DedupKey`), so a redelivered
+     job is the same scheduling decision rather than a second one.
+
+  A store the host cannot reach is an environment fact and raises, per
+  `c:deliver/2` above, rather than being reported as a discard. The
+  README's "Delivering timers to a durable execution" carries a worked
+  host module and the one config line that selects it.
+
   Implementations must be idempotent under redelivery: jobs in this
   package are at-least-once, so `c:deliver/2` can run more than once for
   the same fired timer.

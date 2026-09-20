@@ -26,6 +26,29 @@ defmodule StatifierOban.Timer.Delivery.SessionTest do
     %{scope: "sess_#{context.line}"}
   end
 
+  # The durable-host gap the behaviour's moduledoc documents, pinned as
+  # one fact so it cannot drift silently: a host that leaves `:delivery`
+  # at its default gets this module, and this module answers every timer
+  # for a durable execution - which registers no process at all - with
+  # the terminated discard.
+  #
+  # sabotage: Config's @default_delivery was pointed at
+  # StatifierOban.Invoke.Delivery.Session - went red (the default no
+  # longer named the module whose discard the second assertion pins),
+  # reverted.
+  test "under the default seam, a durable execution's timer discards as :terminated", %{
+    scope: scope
+  } do
+    {:ok, config} = StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :timers)
+
+    assert config.delivery == Delivery.Session
+
+    # `scope` stands for an execution id here, not a session id: a
+    # durable execution is stepped without a process and so registers
+    # none, which is exactly the empty lookup below.
+    assert {:discarded, :terminated} = config.delivery.deliver(scope, fired_fixture())
+  end
+
   # sabotage: the empty-lookup clause returned :delivered - went red
   # (the discard became a claimed delivery), reverted.
   test "step 1: an unregistered scope discards as :terminated", %{scope: scope} do
