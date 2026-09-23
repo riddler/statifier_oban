@@ -497,7 +497,8 @@ schedules is discarded as `:terminated` when it fires. Such a host owes its
 own `StatifierOban.Timer.Delivery`; the behaviour's moduledoc states the
 contract, and nothing below ships in this package.
 
-Neither package depends on the other. The adapter is the host's own module:
+`statifier_persistence` is an optional dependency of this package, and the
+delivery adapter is not part of it: that adapter is the host's own module:
 
 ```elixir
 defmodule MyApp.DurableTimerDelivery do
@@ -573,35 +574,40 @@ already stored, because the unique fields exclude the meta on purpose.
 Before `statifier_persistence` retires a chart it asks whether anything still
 pins it, and its `StatifierPersistence.PinSource` behaviour is how a host
 answers for state that package cannot see. A pending timer is exactly that
-kind of state: a row in the host's own Oban table, in a package the
-persistence package does not depend on.
+kind of state: a row in the host's own Oban table.
 
-Neither package depends on the other and nothing below ships in either of
-them. The adapter is the host's own module:
+This package ships that source. `statifier_persistence` is an optional
+dependency: when the host has it, `StatifierOban.Timer.PinSource` is
+compiled, and one line adopts it in the host's own module:
 
 ```elixir
 defmodule MyApp.TimerPins do
-  @behaviour StatifierPersistence.PinSource
-
-  @impl true
-  def pins(_content_hash, %{execution_ids: execution_ids}) do
-    pending =
-      MyApp.statifier_oban_config()
-      |> StatifierOban.Timer.pending_for(execution_ids)
-      |> Map.values()
-      |> Enum.sum()
-
-    %{timers: pending}
-  end
+  use StatifierOban.Timer.PinSource, config: {MyApp, :statifier_oban_config}
 end
 ```
+
+`:config` names a zero-arity function returning the host's
+`%StatifierOban.Config{}`; it is called on every count, so a config built at
+runtime is read when the count is taken. The host passes `MyApp.TimerPins`
+wherever `statifier_persistence` takes pin sources. Its `pins/2` hands the
+context's `:execution_ids` to `StatifierOban.Timer.pending_for/2` and answers
+one count, `%{timers: n}`.
+
+Take a library hold: its chart waits for `copy.collected` and schedules a
+`pickup.expired` timer when the copy becomes available. While that timer is
+pending, a retirement of the hold's chart is refused with `%{timers: 1}` under
+`MyApp.TimerPins`; once it fires or is cancelled the count is zero and the
+timer no longer holds the chart.
 
 The context's `:execution_ids` are the executions still active on the chart,
 and for a process-less host those ids are the very scopes its timers were
 scheduled under - which is why they can go straight to `pending_for/2`. A
 host that schedules under a live session's id is scoping by session rather
-than by execution and needs a different adapter; `StatifierOban.Timer.Key`
-is where that choice was made.
+than by execution, and the shipped source would answer zero for timers that
+exist. Such a host does not adopt it: its own module stays a valid
+alternative, mapping its executions to the sessions its timers were scheduled
+under before it counts. `StatifierOban.Timer.Key` is where that choice was
+made.
 
 The content hash goes unused here. No chart identity travels on a timer job:
 the args carry the scope and the send, so this package cannot answer a
@@ -611,9 +617,9 @@ sources are answerable by it.
 A source that cannot answer raises, and the behaviour turns a raise into a
 refusal rather than a zero - "no pending timers" and "I could not count"
 must not collapse into one answer when a retirement hangs on the difference.
-So the adapter above rescues nothing: an unreachable repo makes
-`pending_for/2` raise, and the retirement is refused instead of granted on a
-count nobody took.
+So the shipped source rescues nothing, and neither should a host's own: an
+unreachable repo makes `pending_for/2` raise, and the retirement is refused
+instead of granted on a count nobody took.
 
 ## Sensitive values in job args
 

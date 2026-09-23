@@ -76,6 +76,11 @@ defmodule StatifierOban.MixProject do
       # requirement of this package's own surface, not an artifact of
       # Oban's. The floor matches statifier's and Oban's.
       {:telemetry, "~> 1.3"},
+      # Optional, per ADR-0008: `StatifierOban.Timer.PinSource` is compiled
+      # only when `StatifierPersistence.PinSource` is loaded, so a host
+      # without statifier_persistence gains neither the module nor the
+      # dependency. 0.13.0 is the first release carrying the behaviour.
+      {:statifier_persistence, "~> 0.13", optional: true},
 
       # Dev / test
       {:ecto_sqlite3, "~> 0.24", only: :test},
