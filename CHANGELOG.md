@@ -10,6 +10,18 @@ fragment in [`changelog.d/`](changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.12.0] 2026-09-23
+
+`statifier_persistence` becomes an optional dependency at `~> 0.13`.
+A host that does not depend on it upgrades with nothing to change and
+gains neither the new module nor the dependency; a host that does must
+be on `statifier_persistence` 0.13.0 or later, the first release
+carrying the `StatifierPersistence.PinSource` behaviour.
+
+### Added
+
+- `use StatifierOban.Timer.PinSource, config: {module, function}` makes a host module a `StatifierPersistence.PinSource` that answers `%{timers: n}`, the timers still pending under the executions it is asked about; the module is compiled only when `statifier_persistence`, now an optional dependency (`~> 0.13`), is present.
+
 ## [0.11.0] 2026-09-19
 
 ### Added
