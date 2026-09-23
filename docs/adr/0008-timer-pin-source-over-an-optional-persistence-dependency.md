@@ -10,11 +10,19 @@ for state that package cannot see (`sp-ADR-0012` decision 4). The behaviour
 has one callback, `pins(content_hash, context)`, answering a map of atom to
 non-negative integer; the context carries `:execution_ids`, the ids of the
 `:active` executions on the hash. `StatifierPersistence.PinSource.collect/3`
-calls each source and turns a raise into `{:error, {module, {:raised,
-exception}}}`, so a source that cannot answer refuses the retirement
-instead of answering zero (`lib/statifier_persistence/pin_source.ex`,
-`collect/3`'s `rescue`, read at `statifier_persistence` `9cd192b`). The
-behaviour first shipped in `statifier_persistence` 0.13.0, which is on Hex.
+calls each source through its private `ask/3`, whose `rescue` turns a
+raise into `{:error, {:raised, exception}}`, and `collect/3` answers
+`{:error, {module, reason}}` with it, so a source that cannot answer
+refuses the retirement instead of answering zero
+(`lib/statifier_persistence/pin_source.ex`, `defp ask`, read at
+`statifier_persistence` `9cd192b`). The behaviour first shipped in
+`statifier_persistence` 0.13.0, which is on Hex.
+
+Retirement is not the only reader. `statifier_persistence`'s chart
+migration, in flight as its bead `sp-bn0` and not on its main, reads
+pending timers through a pin source the host supplies, and refuses a plan
+that unmaps or drops a state that could own a timer when no source is
+supplied. The same `pins/2` answer serves both callers.
 
 A pending timer is exactly that kind of state, and this package already
 answers the question it needs. `StatifierOban.Timer.pending_for/2` takes a
@@ -95,9 +103,13 @@ function}`, naming a
 zero-arity function in the host that returns the host's
 `%StatifierOban.Config{}`. The `use` defines `pins/2` in the host's module,
 declares the behaviour there, and calls the function on every `pins/2`, so
-a config built at runtime is read at the time of the count. The host
-passes its own module to the retire call; this package ships the counting,
-the host ships only the name of its config.
+a config built at runtime is read at the time of the count. To count,
+the injected `pins/2` calls the existing public
+`StatifierOban.Timer.pending_for/2` with that config and the context's
+`:execution_ids`, and sums the answer; no new public function is added
+for it. The host passes its own module to the retire call, or to a
+migration; this package ships the counting, the host ships only the name
+of its config.
 
 **6. The source is correct only for a host that schedules under durable
 execution ids.** The execution ids a pin source is handed are the scopes
@@ -105,8 +117,12 @@ a process-less host's timers were scheduled under, which is why they can
 go straight to `pending_for/2`. A host that schedules under a live
 session's id is scoping by session, and the execution ids it is handed
 match no stored scope: the source would answer `%{timers: 0}` for timers
-that exist. The source cannot see which choice a host made, so it cannot
-refuse on the mismatch. The rule is therefore stated where a host adopts
+that exist. That zero is wrong for both readers: a retirement would
+proceed with timers pending on the chart, and a migration that leaves a
+state that could own a timer unmapped would proceed while timers are
+pending on the execution (the migration case, `sp-bn0`, Context). The
+source cannot see which choice a host made, so it cannot refuse on the
+mismatch. The rule is therefore stated where a host adopts
 it, in the module's documentation and in the README section: a
 session-scoped host does not adopt this source, and answers with its own
 module that maps its executions to the sessions its timers were scheduled
@@ -115,13 +131,14 @@ under.
 **7. A repo the source cannot reach raises, and the source rescues
 nothing.** `pending_for/2` raises when the Oban instance is not running
 or the repo cannot answer (Context), and the source lets the raise
-through. `collect/3` turns it into a refusal naming the host module that
-adopted the source (decision 5), which is the answer `sp-ADR-0012`
+through. `collect/3` answers a refusal naming the host module that
+adopted the source (decision 5), from the raise its private `ask/3`
+rescues, which is the answer `sp-ADR-0012`
 decision 4 requires: "the source could not answer" and "the source
 answered zero" must stay two facts. A source that rescued to
 `%{timers: 0}` would retire a chart with timers still pending on it.
 
-`collect/3` at `9cd192b` rescues raises only; a failure that surfaces as
+`ask/3` at `9cd192b` rescues raises only; a failure that surfaces as
 an exit or a throw is not turned into a refusal there. Widening that
 rescue is `statifier_persistence`'s bead `sp-2fe`, and nothing in this
 record depends on it.
@@ -179,10 +196,12 @@ fires or is cancelled the count is zero and the timer no longer holds the
 chart.
 
 **The hazard decision 6 names is documentation, not a check.** A
-session-scoped host that adopts the source anyway gets zeros, and a
-retirement it should have refused goes through. Nothing here can detect
-that. It is the same trade `StatifierOban.Timer.Key` already makes by
-leaving the scope to the caller.
+session-scoped host that adopts the source anyway gets zeros, so a
+retirement it should have refused goes through, and a migration that
+leaves a state that could own a timer unmapped proceeds while timers are
+pending. That is why such a host must not adopt the source. Nothing here
+can detect the mismatch. It is the same trade `StatifierOban.Timer.Key`
+already makes by leaving the scope to the caller.
 
 **Nothing here is implemented.** This record changes no file under `lib/`
 or `test/` and no changelog fragment is written for it. The module, the
