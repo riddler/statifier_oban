@@ -1,6 +1,6 @@
 # ADR-0008: The timer pin source ships here, over an optional dependency on statifier_persistence
 
-Status: proposed (2026-09-23, sob-1ul)
+Status: accepted (2026-09-23, sob-1ul)
 
 ## Context
 
@@ -207,3 +207,56 @@ already makes by leaving the scope to the caller.
 or `test/` and no changelog fragment is written for it. The module, the
 `mix.exs` entry, the lock, the README sections and the tests follow in the
 code change that implements it.
+
+## Note (2026-09-23): accepted, the code shipped in 0.12.0
+
+This record is accepted by `sob-0qp`. The code that implements it is
+`eb47942` (`sob-1ul`), carried by the published release 0.12.0 (tag
+`v0.12.0`, `93bddde`). Every decision was read against that tag and again
+against `main` at `89adadd`; nothing a decision names changed between the
+two, since the commits between them touch `mix.exs` only in the
+`ex_quality` entry and `lib/statifier_oban/timer.ex` only in the wording of
+`pending_for/2`'s documentation.
+
+- Decision 1: `StatifierOban.Timer.PinSource` is
+  `lib/statifier_oban/timer/pin_source.ex`, and the injected `pins/2`
+  counts through `StatifierOban.Timer.pending_for/2` (`__using__/1`).
+- Decision 2: `mix.exs` carries `{:statifier_persistence, "~> 0.13",
+  optional: true}` (`defp deps`), and the module is compiled only under
+  `Code.ensure_loaded?(StatifierPersistence.PinSource)` (the file's first
+  line).
+- Decisions 3 and 4: `pins/2` ignores the content hash and answers
+  `%{timers: n}`, the sum of `pending_for/2`'s answers (`__using__/1`).
+- Decision 5: the `use` takes `config: {module, function}`, declares the
+  behaviour in the host's module and calls the function on every `pins/2`
+  (`__using__/1`, `config!/2`); no `Application` call is in `lib/`.
+- Decision 6: the module's "Only for a host that schedules under durable
+  execution ids" section and the README section "Timers as a chart pin
+  source" state the rule.
+- Decision 7: the injected `pins/2` rescues nothing (`__using__/1`).
+- Decision 8: `test/statifier_oban/timer/pin_source_test.exs` tests the
+  count, the zero, the raise and the answer read back through
+  `StatifierPersistence.PinSource.collect/3`.
+- Decision 9: `c_index` and `owner` are row data
+  (`StatifierOban.Timer.JobArgs.from_effect/3`), outside the unique `keys`
+  (`StatifierOban.Timer.Worker`), and unread by
+  `StatifierOban.Timer.Delivery.fired_event/2`.
+- Consequences: both README sections name the optional edge, and
+  `mix.lock` carries `statifier` 2.7.0 and `statifier_persistence` 0.13.0
+  with `{:statifier, "~> 2.5"}` unchanged in `mix.exs` (`statifier_dep/0`).
+
+The Consequences paragraph "Nothing here is implemented." describes the
+record as proposed; it is met by `eb47942` above.
+
+Two readings of `statifier_persistence` in the Context have moved since
+they were written, and each is named by that repository's own records.
+The chart migration the Context calls "in flight as its bead `sp-bn0` and
+not on its main" is on its main: `sp-ADR-0013` (accepted 2026-09-23)
+decision 6 reads pending timers through the pin sources a host supplies
+and refuses, with no source supplied, a plan that leaves unmapped or drops
+a state that could own a timer - the reader this record's decision 6
+names. And decision 7's reading that `ask/3` "at `9cd192b` rescues raises
+only" holds at that SHA; `statifier_persistence`'s `main` now also turns
+a throw or an exit into a refusal (`lib/statifier_persistence/pin_source.ex`,
+`defp ask`, `84c25ea`), which the record already said nothing here
+depends on.
