@@ -186,7 +186,8 @@ defmodule StatifierOban.Timer do
   pending timer, so a caller never has to tell "no timers" from "scope
   absent from the answer". Only this package's own timer jobs are
   counted, and only in the states a timer that has not fired can be in -
-  `StatifierOban.CancellableStates`, the same set `cancel/3` sweeps. A
+  scheduled, available, retryable and, on an Oban that has it, suspended:
+  the internal set of cancellable states `cancel/3` sweeps as well. A
   timer that already fired, was cancelled, or is running its delivery
   right now is not pending and does not count; `executing` is out here
   for the same reason it is out of a cancel.
