@@ -1,7 +1,7 @@
-# Upgrading a host from 0.11 to 0.12 and the next release
+# Upgrading a host from 0.11 to 0.13
 
 This page says what a host changes to move `statifier_oban` from 0.11.0 to
-0.12.0, and what the unreleased work on `main` will ask of it next. A host
+0.12.0, and from 0.12.0 to 0.13.0. A host
 here is the code that embeds the package: the `StatifierOban.Config` it
 builds, the Oban instance and queues it runs the jobs on, its invoke
 handlers, any `StatifierOban.Timer.Delivery` or
@@ -11,7 +11,7 @@ handlers it attaches. What each release added is in
 about it, and says **NONE** where the answer is nothing.
 
 Move the pin with each minor, as the README recommends:
-`{:statifier_oban, "~> 0.12.0"}`. The `statifier` requirement (`~> 2.5`)
+`{:statifier_oban, "~> 0.13.0"}`. The `statifier` requirement (`~> 2.5`)
 and the `oban` requirement (`~> 2.19`) are the same on every step of this
 page. No step here adds a migration: the jobs are Oban's rows, in Oban's
 table.
@@ -46,9 +46,9 @@ May start doing:
   as the `StatifierOban.Timer.PinSource` documentation explains. The
   README's "Timers as a chart pin source" section has the full picture.
 
-## Unreleased: on `main`, not yet on Hex
+## 0.12 to 0.13
 
-Two changes to `StatifierOban.Config` are merged and not yet released.
+0.13.0 makes two changes to `StatifierOban.Config`.
 Must change: **NONE** for either. Every new option is optional, and its
 default does exactly what 0.12.0 does. Both are fixed on the job row when
 the job is enqueued, so a job stored before the upgrade keeps the old
