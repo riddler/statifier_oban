@@ -150,7 +150,7 @@ defmodule StatifierOban.Invoke.Handler do
 
   alias Statifier.Effect.Invoke
   alias Statifier.Invoke.Handler, as: UpstreamHandler
-  alias StatifierOban.{CancellableStates, Config, JobTimeout, Telemetry}
+  alias StatifierOban.{CancellableStates, Config, JobTimeout, Telemetry, UnresolvedHandler}
   alias StatifierOban.Invoke.{JobArgs, Worker}
 
   @typedoc """
@@ -345,7 +345,10 @@ defmodule StatifierOban.Invoke.Handler do
   its meta; meta is not part of the unique fields, so a replay under a
   reconfigured delivery still conflicts with the stored job. A finite
   `:invoke_timeout` rides in the same meta as the job's run-time bound
-  (see `StatifierOban.Config`'s run-time bounds section).
+  (see `StatifierOban.Config`'s run-time bounds section), and so does
+  `:unresolved_handler` when it is `:cancel` (the default, `:retry`,
+  writes nothing - see the moduledoc's unresolvable-handler policy
+  section).
 
   The config's `:opaque_codec` is fixed at enqueue time: read once from
   `handler.config()`, and run over the effect's host-opaque `params` and
@@ -380,10 +383,9 @@ defmodule StatifierOban.Invoke.Handler do
            Worker.new(args,
              queue: queue,
              meta:
-               JobTimeout.put(
-                 %{"delivery" => Atom.to_string(config.invoke_delivery)},
-                 config.invoke_timeout
-               )
+               %{"delivery" => Atom.to_string(config.invoke_delivery)}
+               |> JobTimeout.put(config.invoke_timeout)
+               |> UnresolvedHandler.put(config.unresolved_handler)
            ),
          {:ok, job} <- Oban.insert(config.oban, changeset) do
       Telemetry.invoke_enqueued(scope, handler, invoke, job)

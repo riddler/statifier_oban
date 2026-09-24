@@ -98,16 +98,22 @@ defmodule StatifierOban.Telemetry do
 
   `[:statifier_oban, :invoke, :failed]` mirrors
   `c:StatifierOban.Invoke.Delivery.deliver_failure/3` exactly, including
-  ADR-0005's three-class `reason` vocabulary (`"run_failed"`,
-  `"run_crashed"`, `"undecodable"`) and its `attempts` semantics. Its
-  `handler` is `nil` on the `"undecodable"` class alone: that row never
-  reached handler resolution, because the decode that would have named the
-  module is the thing that failed.
+  ADR-0005's five-class `reason` vocabulary (`"run_failed"`,
+  `"run_crashed"`, `"undecodable"`, `"fan_out_refused"`,
+  `"invalid_handler"`) and its `attempts` semantics. Its `handler` is
+  `nil` on the `"undecodable"` class and on the `"invalid_handler"`
+  class alike: on both, the row never reached handler resolution -
+  either the decode that would have named the module is the thing that
+  failed, or the resolution itself is.
 
-  Where the seam delivers nothing, this emits nothing: the environment
+  Where the seam delivers nothing, this emits nothing: under the default
+  `StatifierOban.Config` `:unresolved_handler` `:retry`, the environment
   errors `:invalid_handler`, `:invalid_delivery`, `:invalid_codec` and
   `:codec_failed` say the deploy is wrong rather than anything about the
-  invocation, and they ride Oban's exception event.
+  invocation, and they ride Oban's exception event. `:unresolved_handler`
+  `:cancel` is the one exception: an unresolvable handler cancels and
+  emits `[:statifier_oban, :invoke, :failed]` with `reason`
+  `"invalid_handler"` instead, on the way past.
 
   ## Fan-out seam
 
@@ -473,15 +479,16 @@ defmodule StatifierOban.Telemetry do
   end
 
   @doc """
-  Emits `[:statifier_oban, :invoke, :failed]` - the terminal attempt gave
-  up and `error.communication.invoke.<invoke_id>` went into the
+  Emits `[:statifier_oban, :invoke, :failed]` - the attempt gave up for
+  good and `error.communication.invoke.<invoke_id>` went into the
   execution.
 
   Mirrors `c:StatifierOban.Invoke.Delivery.deliver_failure/3`: `reason` is
-  ADR-0005's three-class vocabulary and `attempts` follows its semantics -
+  ADR-0005's five-class vocabulary and `attempts` follows its semantics -
   `max_attempts` for the two `run/1` classes, the cancelling attempt's own
-  number for `"undecodable"`. `handler` is `nil` for `"undecodable"`,
-  where the row never reached handler resolution.
+  number for `"undecodable"`, `"fan_out_refused"` and `"invalid_handler"`.
+  `handler` is `nil` for `"undecodable"` and for `"invalid_handler"`
+  alike, where the row never reached handler resolution.
   """
   @spec invoke_failed(
           scope(),

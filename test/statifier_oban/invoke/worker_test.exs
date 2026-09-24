@@ -292,6 +292,141 @@ defmodule StatifierOban.Invoke.WorkerTest do
     assert error =~ "invalid_handler"
   end
 
+  # -- the unresolvable-handler policy (sob-nnp, ADR-0005's 2026-09-24
+  # Amendment) -------------------------------------------------------------
+
+  # sabotage: `unresolved_handler/5` ignored the policy and always
+  # cancelled - went red (the job cancelled and delivered instead of
+  # being discarded), reverted.
+  test "the default policy still retries an unresolvable handler on its terminal attempt, delivering nothing" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    args =
+      "sess_iw_nohandler_default"
+      |> args_for("inv_nohandler_default", TestInvokeHandler)
+      |> Map.put("handler", "Elixir.StatifierOban.NoSuchHandler")
+
+    insert!(args,
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)},
+      max_attempts: 1
+    )
+
+    assert %{discard: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{state: "discarded", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_nohandler_default", "inv_nohandler_default")
+
+    assert error =~ "invalid_handler"
+    refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
+  end
+
+  # sabotage: `UnresolvedHandler.cancel?/1` was changed to always return
+  # `false` - went red (the job retried and nothing was delivered instead
+  # of cancelling), reverted.
+  test "unresolved_handler: :cancel cancels the job and delivers invalid_handler through the seam" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    args =
+      "sess_iw_nohandler_cancel"
+      |> args_for("inv_nohandler_cancel", TestInvokeHandler)
+      |> Map.put("handler", "Elixir.StatifierOban.NoSuchHandler")
+
+    insert!(args,
+      meta: %{
+        "delivery" => Atom.to_string(RecordingDelivery),
+        "unresolved_handler" => "cancel"
+      }
+    )
+
+    assert %{cancelled: 1, success: 0, failure: 0} = drain()
+
+    assert [%Oban.Job{state: "cancelled", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_nohandler_cancel", "inv_nohandler_cancel")
+
+    assert error =~ "invalid_handler"
+
+    assert_received {:failed_via_seam, "sess_iw_nohandler_cancel", "inv_nohandler_cancel",
+                     failure}
+
+    assert failure[:reason] == "invalid_handler"
+    assert failure[:detail] == "Elixir.StatifierOban.NoSuchHandler"
+    assert failure[:attempts] == 1
+  end
+
+  # sabotage: `unresolved_handler/5`'s cancel branch used the default
+  # delivery module instead of resolving the job's meta - went red (the
+  # job cancelled instead of retrying), reverted.
+  test "unresolved_handler: :cancel with an unresolvable delivery module still retries - there is no door" do
+    args =
+      "sess_iw_nohandler_nodelivery"
+      |> args_for("inv_nohandler_nodelivery", TestInvokeHandler)
+      |> Map.put("handler", "Elixir.StatifierOban.NoSuchHandler")
+
+    insert!(args,
+      meta: %{
+        "delivery" => "Elixir.StatifierOban.NoSuchDelivery",
+        "unresolved_handler" => "cancel"
+      }
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_nohandler_nodelivery", "inv_nohandler_nodelivery")
+
+    assert error =~ "invalid_delivery"
+  end
+
+  # sabotage: `resolve_and_execute/4` treated every handler as
+  # unresolvable when the policy was `:cancel` - went red (the job
+  # cancelled instead of completing), reverted.
+  test "unresolved_handler: :cancel does not change the outcome for a resolvable handler" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_resolvable_cancel", "inv_resolvable_cancel", TestInvokeHandler),
+      meta: %{
+        "delivery" => Atom.to_string(RecordingDelivery),
+        "unresolved_handler" => "cancel"
+      }
+    )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+
+    assert_received {:delivered_via_seam, "sess_iw_resolvable_cancel", "inv_resolvable_cancel",
+                     %{"result" => "authorized"}}
+  end
+
+  # sabotage: `cancel_unresolved_handler/5` passed a module instead of
+  # `nil` as the handler to `Telemetry.invoke_failed/7` - went red (the
+  # metadata's handler was not nil), reverted.
+  test "unresolved_handler: :cancel emits invoke :failed with a nil handler" do
+    handler_id = "iw-nohandler-telemetry-#{:erlang.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:statifier_oban, :invoke, :failed],
+      &__MODULE__.relay_telemetry/4,
+      self()
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    args =
+      "sess_iw_nohandler_telemetry"
+      |> args_for("inv_nohandler_telemetry", TestInvokeHandler)
+      |> Map.put("handler", "Elixir.StatifierOban.NoSuchHandler")
+
+    insert!(args, meta: %{"unresolved_handler" => "cancel"})
+
+    assert %{cancelled: 1} = drain()
+
+    assert_received {:telemetry_event, measurements, metadata}
+    assert %{attempts: 1} = measurements
+    assert metadata.reason == "invalid_handler"
+    assert metadata.handler == nil
+    assert metadata.detail == "Elixir.StatifierOban.NoSuchHandler"
+  end
+
   # sabotage: `delivery_module/1`'s binary arm skipped resolution and
   # returned the default - went red (the job completed through the
   # default seam instead of retrying), reverted.
@@ -689,6 +824,13 @@ defmodule StatifierOban.Invoke.WorkerTest do
   end
 
   # -- helpers ------------------------------------------------------------
+
+  # Attached as a module function rather than a closure: `:telemetry`
+  # logs a performance warning for a local capture.
+  @doc false
+  def relay_telemetry(_event, measurements, metadata, listener) do
+    send(listener, {:telemetry_event, measurements, metadata})
+  end
 
   defp args_for(scope, invoke_id, handler, caller_context \\ nil) do
     {:ok, args} =

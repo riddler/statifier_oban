@@ -274,4 +274,65 @@ defmodule StatifierOban.ConfigTest do
 
     assert InvokeWorker.timeout(job) == 4_294_967_295
   end
+
+  # -- the unresolvable-handler policy (sob-nnp) ---------------------------
+
+  # sabotage: `@default_unresolved_handler` was changed to `:cancel` -
+  # went red here and on the moduledoc's default, reverted.
+  test "new/1 defaults :unresolved_handler to :retry" do
+    assert {:ok, %Config{unresolved_handler: :retry}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t)
+  end
+
+  # sabotage: `fetch_unresolved_handler/1` ignored the option and always
+  # returned the default - went red (:cancel came back as :retry),
+  # reverted.
+  test "new/1 accepts :cancel" do
+    assert {:ok, %Config{unresolved_handler: :cancel}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, unresolved_handler: :cancel)
+  end
+
+  # sabotage: `fetch_unresolved_handler/1`'s guard was narrowed to
+  # `policy == :cancel` - went red (an explicit :retry was rejected),
+  # reverted.
+  test "new/1 accepts an explicit :retry" do
+    assert {:ok, %Config{unresolved_handler: :retry}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, unresolved_handler: :retry)
+  end
+
+  # sabotage: `fetch_unresolved_handler/1`'s guard was widened to any
+  # atom - went red (:park built a config instead of erroring), reverted.
+  test "new/1 rejects a value that is neither :retry nor :cancel" do
+    assert {:error, {:invalid_option, :unresolved_handler, :park}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, unresolved_handler: :park)
+
+    assert {:error, {:invalid_option, :unresolved_handler, "cancel"}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, unresolved_handler: "cancel")
+  end
+
+  # An explicit `nil` is stored, not absent, so `Keyword.get/3`'s default
+  # never applies - it must be rejected like any other unrecognized
+  # value rather than silently read as the default.
+  #
+  # sabotage: `fetch_unresolved_handler/1` was changed to
+  # `Keyword.get(opts, :unresolved_handler) || @default_unresolved_handler`
+  # - went red (an explicit nil built a default config instead of
+  # erroring), reverted.
+  test "new/1 rejects an explicit nil rather than reading it as the default" do
+    assert {:error, {:invalid_option, :unresolved_handler, nil}} =
+             Config.new(oban: MyHost.Oban, timers_queue: :t, unresolved_handler: nil)
+  end
+
+  # sabotage: `:unresolved_handler` was dropped from `@known_options` -
+  # went red here and on the moduledoc's doctest (a correctly-spelled,
+  # valid option was rejected as unknown), reverted.
+  test "new/1 accepts :unresolved_handler alongside the rest" do
+    assert {:ok, %Config{unresolved_handler: :cancel, max_fan_out: 7}} =
+             Config.new(
+               oban: MyHost.Oban,
+               timers_queue: :t,
+               unresolved_handler: :cancel,
+               max_fan_out: 7
+             )
+  end
 end
