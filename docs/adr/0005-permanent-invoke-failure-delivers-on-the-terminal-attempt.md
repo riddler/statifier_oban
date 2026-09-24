@@ -423,3 +423,86 @@ unchanged, and so is the retry an unresolvable handler gets. With the
 `:infinity` default no task is started and the handler runs in the job
 process, as before. The code this Note describes arrives in the same change
 as the Note, `sob-eh8`.
+
+## Amendment (2026-09-24): an unresolvable handler may cancel and deliver, under `:unresolved_handler` `:cancel`
+
+Status: proposed (2026-09-24, sob-nnp)
+
+Decision 6 above says:
+
+> **6. Only `run/1`'s own exhaustion delivers.** The environment errors -
+> `:invalid_handler`, `:invalid_delivery`, `:invalid_codec`, `:codec_failed` -
+> retry and can in principle exhaust too, but they say nothing about the
+> invocation; they say the deploy is wrong.
+
+**This Amendment reverses decision 6 for the `:invalid_handler` arm only,
+and only under the new `:unresolved_handler` `:cancel` policy.** The
+default is `:unresolved_handler` `:retry`, unchanged: an unresolvable
+handler still retries to exhaustion and delivers nothing under it, exactly
+as decision 6 describes, and decision 6's rationale for that default
+stands - an unresolvable handler says the deploy is wrong, and retrying
+keeps the invocation alive across a deploy that fixes it.
+
+`:cancel` exists for a host that deploys handler code in a separate
+release from the one that enqueues invocations: that host would rather
+park the job than have it fight a retry backoff waiting for a handler
+that has not shipped yet, and a deploy that adds the handler can
+re-enqueue the invocation once it lands. Retrying such a job to
+exhaustion also leaves the chart hanging for as long as the backoff
+schedule takes to exhaust; cancelling tells it at once.
+
+### Decision
+
+**A fifth failure class, `"invalid_handler"`, for an unresolvable handler
+under `:unresolved_handler` `:cancel`.** `:detail` is the handler name
+exactly as stored on the row, a string per decision 4. `:attempts` is the
+attempt that found the fault, not `max_attempts` - the same rule the
+2026-08-29 Amendment gives for `"undecodable"` and the 2026-09-05 Note
+gives for `"fan_out_refused"`: the attempt that cancels is the
+invocation's last one. The job cancels with `{:invalid_handler, name}`,
+the same error tag the retrying arm records
+(`cancel_unresolved_handler/5` in `lib/statifier_oban/invoke/worker.ex`).
+
+**No new event name, function or error family is created.** The class
+is delivered through `c:StatifierOban.Invoke.Delivery.deliver_failure/3`,
+behind the same liveness check, as
+`error.communication.invoke.<invoke_id>`, and it emits
+`[:statifier_oban, :invoke, :failed]` with `handler` `nil`, as the
+`"undecodable"` class does, because the handler never resolved
+(`cancel_unresolved_handler/5` in `lib/statifier_oban/invoke/worker.ex`).
+
+**The delivery module must resolve first, and an unresolvable delivery
+module still retries.** Decisions 5 and 6 already say `:invalid_delivery`
+has no seam to deliver through; under `:cancel` a job whose handler and
+delivery module are both unresolvable retries with `:invalid_delivery`
+(`unresolved_handler/5` in `lib/statifier_oban/invoke/worker.ex`). Under
+the default a job whose handler is unresolvable retries with
+`:invalid_handler` whatever its delivery module does, as before. The
+other environment errors decision 6 lists, `:invalid_codec` and
+`:codec_failed`, are untouched.
+
+**The policy is fixed at enqueue time and reads as `:retry` when
+absent.** The option is `StatifierOban.Config`'s `:unresolved_handler`,
+`:retry` or `:cancel` (`fetch_unresolved_handler/1` in
+`lib/statifier_oban/config.ex`). It travels on the job's meta, as the
+run-time bound of the 2026-09-24 Note does: `:retry` writes nothing, and
+only a stored `"cancel"` reads as `:cancel`
+(`StatifierOban.UnresolvedHandler`, `lib/statifier_oban/unresolved_handler.ex`),
+so a job stored before the option existed retries.
+
+### Consequences
+
+A host whose handler code deploys on a different schedule from its
+enqueueing code can choose to have an unresolvable handler park rather
+than retry, and the chart still hears about it. A host that sets nothing
+keeps exactly the behavior decision 6 describes.
+
+Under `:cancel` a handler that is missing only briefly - a rolling
+deploy in which one node runs the job before the module reaches it -
+cancels an invocation a retry would have completed. That is the trade
+the option names, and it is why `:retry` stays the default.
+
+The reopen trigger is a host that needs `:invalid_delivery`,
+`:invalid_codec` or `:codec_failed` to cancel rather than retry; neither
+decision 6 nor this Amendment settles that. The code this Amendment
+describes arrives in the same change as the Amendment, `sob-nnp`.

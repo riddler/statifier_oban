@@ -211,18 +211,22 @@ whatever a host's own execution store calls the not-live case. This is the spec
 
 `[:statifier_oban, :invoke, :failed]` mirrors
 `c:StatifierOban.Invoke.Delivery.deliver_failure/3` exactly, including the
-three-class `reason` vocabulary ADR-0005 fixed - `"run_failed"`,
-`"run_crashed"`, `"undecodable"` - and its `attempts` semantics, which are
-`max_attempts` for the first two and the cancelling attempt's own number for
-`"undecodable"`. It fires from the same two call sites as the delivery, on
-the terminal attempt only, for the same reason: a retry that will be tried
-again is not a fact worth reporting, and non-terminal failures are already
-`[:oban, :job, :exception]`.
+five-class `reason` vocabulary ADR-0005 fixed - `"run_failed"`,
+`"run_crashed"`, `"undecodable"`, `"fan_out_refused"`, `"invalid_handler"` -
+and its `attempts` semantics, which are `max_attempts` for the first two and
+the cancelling attempt's own number for the other three. It fires on the
+attempt that gives up for good, never on one that will be retried, for the
+same reason: a retry that will be tried again is not a fact worth reporting,
+and non-terminal failures are already `[:oban, :job, :exception]`.
 
-Where the seam delivers nothing, this emits nothing. The environment errors
+Where the seam delivers nothing, this emits nothing. Under the default
+`StatifierOban.Config` `:unresolved_handler` `:retry`, the environment errors
 `:invalid_handler`, `:invalid_delivery`, `:invalid_codec` and `:codec_failed`
 say the deploy is wrong rather than anything about the invocation, and
 ADR-0005 already records that limit; they ride Oban's exception event.
+`:unresolved_handler` `:cancel` is the one exception: an unresolvable handler
+cancels and emits `"invalid_handler"` here instead, `handler` `nil` just as it
+is for `"undecodable"`.
 
 ### Fan-out seam
 

@@ -90,16 +90,23 @@ defmodule StatifierOban.Invoke.Worker do
     about the row;
   - a handler or delivery module that cannot be resolved returns
     `{:error, {:invalid_handler, _}}` / `{:error, {:invalid_delivery, _}}`
-    and retries - environment facts about the host's code, fixable by a
-    deploy, unlike the row facts above.
+    and retries by default - environment facts about the host's code,
+    fixable by a deploy, unlike the row facts above. Under
+    `StatifierOban.Config`'s `:unresolved_handler` `:cancel`, an
+    unresolvable **handler** instead cancels with `{:invalid_handler,
+    name}` and delivers `error.communication.invoke.<invoke_id>` on the
+    way past, once the delivery module itself resolves - an unresolvable
+    **delivery** module still retries either way, because there is no
+    door to deliver through.
 
   ## Failure classes
 
   The `:reason` string on a failure delivery is this package's
   vocabulary to choose: st-ADR-0068 fixes the event and the payload
-  shape but interprets neither. Four classes are emitted - the two ways
+  shape but interprets neither. Five classes are emitted - the two ways
   `run/1` can exhaust its retries, the one way a job is over before
-  `run/1` is ever reached, and the one way a fan-out is refused:
+  `run/1` is ever reached, the one way a fan-out is refused, and the one
+  way an unresolvable handler cancels under the opt-in policy below:
 
   - `"run_failed"` - the last attempt returned `{:error, reason}`.
     `:detail` is that reason, inspected.
@@ -117,20 +124,31 @@ defmodule StatifierOban.Invoke.Worker do
     8). It is counts and constants only - the fanned-out list itself
     never reaches the execution this way. The class is ADR-0005's, added to
     its decision 3 by that record's 2026-09-05 Note.
+  - `"invalid_handler"` - the row's handler module did not resolve, and
+    `StatifierOban.Config`'s `:unresolved_handler` is `:cancel`, so the
+    job cancels rather than retrying. `:detail` is the handler name
+    exactly as stored on the row. Under the default `:retry` this class
+    is never emitted; the job retries instead (ADR-0005's 2026-09-24
+    Amendment).
 
   `:attempts` is the job's `attempt` on the try that gave up. For the
   two `run/1` classes that is the terminal attempt, which equals
-  `max_attempts`; for `"undecodable"` and `"fan_out_refused"` it is the
-  attempt that found the fault, because that attempt cancels and there
-  is no later one.
+  `max_attempts`; for `"undecodable"`, `"fan_out_refused"` and
+  `"invalid_handler"` it is the attempt that found the fault, because
+  that attempt cancels and there is no later one.
 
   Of the failures that are *not* about the row, only `run/1`'s own
-  exhaustion delivers. The environment errors above
+  exhaustion delivers by default. The environment errors above
   (`:invalid_handler`, `:invalid_delivery`, `:invalid_codec`,
-  `:codec_failed`) retry and can in principle exhaust too, but they say
-  nothing about the invocation - they say the deploy is wrong - and
-  `:invalid_delivery` has by definition no seam to deliver through.
-  ADR-0005 records that limit rather than leaving it to be inferred.
+  `:codec_failed`) retry under the default `:unresolved_handler`
+  `:retry` and can in principle exhaust too, but they say nothing about
+  the invocation - they say the deploy is wrong - and `:invalid_delivery`
+  has by definition no seam to deliver through. `:unresolved_handler`
+  `:cancel` is the one opt-in exception: an unresolvable handler cancels
+  and delivers `"invalid_handler"` instead of retrying, for a host that
+  wants such a job parked rather than fought through backoff. ADR-0005's
+  2026-09-24 Amendment records that exception rather than leaving it to
+  be inferred.
 
   ## The run-time bound
 
@@ -164,7 +182,7 @@ defmodule StatifierOban.Invoke.Worker do
     ]
 
   alias StatifierOban.Invoke.{FanOut, JobArgs}
-  alias StatifierOban.{JobTimeout, Telemetry}
+  alias StatifierOban.{JobTimeout, Telemetry, UnresolvedHandler}
 
   @default_delivery StatifierOban.Invoke.Delivery.Session
 
@@ -177,15 +195,34 @@ defmodule StatifierOban.Invoke.Worker do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args, meta: meta} = job) do
-    with {:ok, scope, handler_name, invoke} <- decode(args),
-         {:ok, handler} <- resolve_module(handler_name, &run_exported?/1, :invalid_handler),
-         {:ok, delivery} <- delivery_module(meta) do
-      execute(job, delivery, scope, handler, invoke)
-    else
+  def perform(%Oban.Job{args: args} = job) do
+    case decode(args) do
+      {:ok, scope, handler_name, invoke} ->
+        resolve_and_execute(job, scope, handler_name, invoke)
+
       {:cancel, {:undecodable, reason}} = cancel ->
         fail_undecodable(job, reason)
         cancel
+
+      other ->
+        other
+    end
+  end
+
+  # The handler resolves before the delivery module, so a row on which
+  # both are unresolvable still retries with `{:invalid_handler, _}`, as
+  # it always has. Only an unresolvable handler reaches the
+  # `:unresolved_handler` policy; an unresolvable delivery module falls
+  # through and retries under either policy.
+  @spec resolve_and_execute(Oban.Job.t(), String.t(), String.t(), Statifier.Effect.Invoke.t()) ::
+          :ok | {:cancel, term()} | {:error, term()}
+  defp resolve_and_execute(%Oban.Job{meta: meta} = job, scope, handler_name, invoke) do
+    with {:ok, handler} <- resolve_module(handler_name, &run_exported?/1, :invalid_handler),
+         {:ok, delivery} <- delivery_module(meta) do
+      execute(job, delivery, scope, handler, invoke)
+    else
+      {:error, {:invalid_handler, name}} = retry ->
+        unresolved_handler(job, scope, invoke, name, retry)
 
       other ->
         other
@@ -354,13 +391,74 @@ defmodule StatifierOban.Invoke.Worker do
         nil
       )
 
-      # `handler` is `nil` here and only here: the decode that would have
-      # named the module is the thing that failed, so the row's handler
-      # was never resolved. ADR-0006's table carries the same note.
+      # `handler` is `nil` here, and on the `"invalid_handler"` cancel
+      # below: in both cases the thing that failed is the very step that
+      # would have named the module, so it was never resolved. ADR-0006's
+      # table carries the same note.
       Telemetry.invoke_failed(scope, nil, invoke_id, "undecodable", detail, attempt, job_id)
     end
 
     :ok
+  end
+
+  # The `StatifierOban.Config` `:unresolved_handler` policy (ADR-0005's
+  # 2026-09-24 Amendment). `retry` is the ordinary
+  # `{:error, {:invalid_handler, name}}`: under the default `:retry` it is
+  # returned unchanged, so the job retries exactly as it always has, and
+  # so does a job stored before the option existed. Under `:cancel` the
+  # delivery module is resolved first - the door has to exist before
+  # anything goes through it - and an unresolvable delivery module
+  # returns its own `{:error, {:invalid_delivery, _}}` and retries.
+  @spec unresolved_handler(
+          Oban.Job.t(),
+          String.t(),
+          Statifier.Effect.Invoke.t(),
+          String.t(),
+          {:error, {:invalid_handler, String.t()}}
+        ) ::
+          {:error, {:invalid_handler | :invalid_delivery, term()}}
+          | {:cancel, {:invalid_handler, String.t()}}
+  defp unresolved_handler(%Oban.Job{meta: meta} = job, scope, invoke, name, retry) do
+    if UnresolvedHandler.cancel?(job) do
+      with {:ok, delivery} <- delivery_module(meta) do
+        cancel_unresolved_handler(job, delivery, scope, invoke, name)
+      end
+    else
+      retry
+    end
+  end
+
+  # Modeled on the `{:refused, refusal}` arm of `fan_out/7` and on
+  # `fail_undecodable/2`: deliver on the way past, through the same
+  # liveness-checked door, then cancel. The seam's `:delivered` or
+  # `{:discarded, _}` result is not inspected - the fan-out refusal arm
+  # does the same, because either way this attempt is the invocation's
+  # last one and the cancel is unconditional.
+  @spec cancel_unresolved_handler(
+          Oban.Job.t(),
+          module(),
+          String.t(),
+          Statifier.Effect.Invoke.t(),
+          String.t()
+        ) :: {:cancel, {:invalid_handler, String.t()}}
+  defp cancel_unresolved_handler(
+         %Oban.Job{attempt: attempt, id: job_id},
+         delivery,
+         scope,
+         %Statifier.Effect.Invoke{invoke_id: invoke_id} = invoke,
+         name
+       ) do
+    deliver_failure(
+      delivery,
+      scope,
+      invoke_id,
+      [reason: "invalid_handler", attempts: attempt, detail: name],
+      invoke.caller_context
+    )
+
+    Telemetry.invoke_failed(scope, nil, invoke_id, "invalid_handler", name, attempt, job_id)
+
+    {:cancel, {:invalid_handler, name}}
   end
 
   # The rescue/catch arms do not change what a crash out of `run/1` does
@@ -566,8 +664,10 @@ defmodule StatifierOban.Invoke.Worker do
   # The meta value is a module name written by the base handler from a
   # validated `Config`, so resolution failures are deploy-shaped: the
   # module was renamed or removed after the job was stored. `:error` (not
-  # `:cancel`) keeps the invoke alive across the host fixing that. The
-  # handler name in the args resolves through the same rule.
+  # `:cancel`) keeps the invoke alive across the host fixing that, under
+  # either `:unresolved_handler` policy. The handler name in the args
+  # resolves through the same rule, and `unresolved_handler/5` decides
+  # whether its `:error` retries or cancels.
   @spec delivery_module(map()) :: {:ok, module()} | {:error, {:invalid_delivery, term()}}
   defp delivery_module(meta) do
     case Map.get(meta, "delivery") do

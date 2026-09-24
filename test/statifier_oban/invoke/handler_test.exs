@@ -88,6 +88,29 @@ defmodule StatifierOban.Invoke.HandlerTest do
     end
   end
 
+  # The acceptance handler for the unresolvable-handler policy (sob-nnp):
+  # a config carrying `unresolved_handler: :cancel`.
+  defmodule CancelUnresolvedHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config do
+      {:ok, config} =
+        Config.new(
+          oban: StatifierOban.TestInvokeHandler.oban_name(),
+          timers_queue: "t",
+          invoke_queue: StatifierOban.TestInvokeHandler.queue(),
+          unresolved_handler: :cancel
+        )
+
+      config
+    end
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{"result" => "authorized"}}
+  end
+
   defmodule NoQueueHandler do
     @moduledoc false
     use StatifierOban.Invoke.Handler
@@ -294,6 +317,42 @@ defmodule StatifierOban.Invoke.HandlerTest do
     assert [%Oban.Job{meta: meta}] = stored_jobs(scope, "inv_nobound")
     refute Map.has_key?(meta, "timeout")
     assert Worker.timeout(%Oban.Job{meta: meta}) == :infinity
+  end
+
+  # sabotage: `UnresolvedHandler.put/2`'s `:retry` clause wrote
+  # `"retry"` under the key - went red (the default config's job carried
+  # the key), reverted.
+  test "a config left at the default :unresolved_handler stores no policy on the job" do
+    scope = "sess_invoke_nopolicy_#{unique()}"
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("inv_nopolicy")},
+               ctx_for(scope)
+             )
+
+    assert [%Oban.Job{meta: meta}] = stored_jobs(scope, "inv_nopolicy")
+    refute Map.has_key?(meta, "unresolved_handler")
+  end
+
+  # sabotage: `enqueue/4` dropped the `UnresolvedHandler.put/2` pipe
+  # stage - went red (no policy on the stored job), reverted.
+  # sabotage: `UnresolvedHandler.put/2`'s `:cancel` clause wrote
+  # `"canceled"` - went red (the stored value was not "cancel"),
+  # reverted.
+  test "a :cancel config stores \"cancel\" as the policy on the job" do
+    scope = "sess_invoke_policy_#{unique()}"
+
+    assert :ok =
+             Handler.perform(
+               CancelUnresolvedHandler,
+               {:start, invoke_fixture("inv_policy")},
+               ctx_for(scope)
+             )
+
+    assert [%Oban.Job{meta: meta}] = stored_jobs(scope, "inv_policy")
+    assert meta["unresolved_handler"] == "cancel"
   end
 
   # sabotage: the base's injected `cancel/2` planned `{:ok, []}` instead

@@ -509,6 +509,40 @@ A host running `Oban.Plugins.Lifeline` can set its `:rescue_after` above
 the largest bound it configures (for invoke jobs, the bound plus the
 margin), rather than guessing at a ceiling nothing enforces.
 
+## Parking a job whose handler is missing
+
+An invoke job's row names its handler module by string, and that name can
+fail to resolve - the module was renamed, removed, or simply has not been
+deployed to this node yet. By default (`unresolved_handler: :retry`) such
+a job retries to exhaustion and delivers nothing, exactly as it always
+has (ADR-0005 decision 6).
+
+```elixir
+{:ok, config} =
+  StatifierOban.Config.new(
+    oban: MyApp.Oban,
+    timers_queue: :statifier_timers,
+    invoke_queue: :statifier_invokes,
+    unresolved_handler: :cancel
+  )
+```
+
+`unresolved_handler: :cancel` instead cancels the job on the attempt that
+finds the handler missing, and delivers
+`error.communication.invoke.<invoke_id>` with `reason: "invalid_handler"`,
+`detail` the handler name, and `attempts` that attempt's own number. A
+host that runs its handlers in a separate release from the one enqueueing
+invocations is what this is for: rather than a job fighting a retry
+backoff until the handler ships, the chart hears about it at once, and a
+transition on `error.communication` can re-enqueue the invocation once
+the deploy lands.
+
+An unresolvable *delivery* module still retries either way - there is no
+door to deliver through, whatever this option is set to. The policy is
+fixed at enqueue time, the same way the run-time bounds are: it travels
+in the job's meta, so a job stored before the option existed reads as
+`:retry`.
+
 ## The contract this package implements
 
 The host-facing pattern is already specified upstream, and this package is one

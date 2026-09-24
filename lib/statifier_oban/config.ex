@@ -84,6 +84,12 @@ defmodule StatifierOban.Config do
       iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, timer_timeout: 0)
       {:error, {:invalid_option, :timer_timeout, 0}}
 
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, unresolved_handler: :cancel)
+      {:ok, %StatifierOban.Config{oban: MyApp.Oban, timers_queue: :t, unresolved_handler: :cancel}}
+
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, unresolved_handler: :park)
+      {:error, {:invalid_option, :unresolved_handler, :park}}
+
   ## The `:opaque_codec` seam (ADR-0002 stance)
 
   `:opaque_codec` is optional and defaults to `nil` - identity, today's
@@ -148,6 +154,36 @@ defmodule StatifierOban.Config do
   returns the bound plus a fixed margin, as a backstop for the delivery
   that follows the call. With the default `:infinity` no task is started
   and `run/1` runs in the job process, as it always has.
+
+  ## The unresolvable-handler policy
+
+  `:unresolved_handler` decides what an invoke job does when the handler
+  module named on its row does not resolve - renamed, removed, or simply
+  not yet deployed to this node. It takes `:retry` (the default) or
+  `:cancel`; any other value is rejected by `Config.new/1`.
+
+  Under the default `:retry`, an unresolvable handler behaves exactly as
+  it always has: the attempt fails with `{:error, {:invalid_handler,
+  name}}` and retries while attempts remain, delivering nothing even on
+  exhaustion (`StatifierOban.Invoke.Worker`'s "Failure classes" section,
+  ADR-0005 decision 6).
+
+  Under `:cancel`, an unresolvable handler instead cancels the job on the
+  attempt that finds it, and delivers
+  `error.communication.invoke.<invoke_id>` with `"reason"`
+  `"invalid_handler"` and `"detail"` the handler name exactly as stored,
+  provided the job's delivery module itself resolves. An unresolvable
+  *delivery* module still retries under either value: there is no door
+  to deliver through. The policy is fixed at enqueue time, from the
+  config in force when the job was stored: `StatifierOban.Invoke.Handler`
+  writes it into the job's meta, and a job stored before the option
+  existed (or one with a hand-edited row) reads as `:retry`.
+
+  A host that deploys handler code in a separate release from the one
+  enqueueing invocations is what this exists for: rather than fighting a
+  retry backoff until the handler ships, `:cancel` parks the job and
+  tells the chart at once, so a transition on `error.communication` can
+  re-enqueue the invocation once the deploy lands.
   """
 
   alias StatifierOban.JobTimeout
@@ -164,7 +200,8 @@ defmodule StatifierOban.Config do
     max_fan_out: 1_000,
     invoke_timeout: :infinity,
     child_start_timeout: :infinity,
-    timer_timeout: :infinity
+    timer_timeout: :infinity,
+    unresolved_handler: :retry
   ]
 
   @typedoc """
@@ -188,6 +225,9 @@ defmodule StatifierOban.Config do
   `:max_fan_out` is the positive integer cap on a fan-out's width.
   `:invoke_timeout`, `:child_start_timeout` and `:timer_timeout` are the
   per-attempt run-time bounds, in milliseconds or `:infinity`.
+  `:unresolved_handler` is `:retry` (the default) or `:cancel` - what an
+  invoke job does when its handler module does not resolve (see the
+  moduledoc's unresolvable-handler policy section).
   """
   @type t :: %__MODULE__{
           oban: Oban.name(),
@@ -200,11 +240,21 @@ defmodule StatifierOban.Config do
           max_fan_out: pos_integer(),
           invoke_timeout: timeout_bound(),
           child_start_timeout: timeout_bound(),
-          timer_timeout: timeout_bound()
+          timer_timeout: timeout_bound(),
+          unresolved_handler: unresolved_handler()
         }
 
   @typedoc "A per-attempt run-time bound: milliseconds, or `:infinity` for none."
   @type timeout_bound :: pos_integer() | :infinity
+
+  @typedoc """
+  The unresolvable-handler policy: `:retry` (the default) retries an
+  unresolvable handler to exhaustion and delivers nothing; `:cancel`
+  cancels the job on the attempt that finds it and delivers
+  `error.communication.invoke.<invoke_id>` with `"reason"`
+  `"invalid_handler"`.
+  """
+  @type unresolved_handler :: :retry | :cancel
 
   @known_options [
     :oban,
@@ -217,11 +267,13 @@ defmodule StatifierOban.Config do
     :max_fan_out,
     :invoke_timeout,
     :child_start_timeout,
-    :timer_timeout
+    :timer_timeout,
+    :unresolved_handler
   ]
   @default_delivery StatifierOban.Timer.Delivery.Session
   @default_invoke_delivery StatifierOban.Invoke.Delivery.Session
   @default_max_fan_out 1_000
+  @default_unresolved_handler :retry
 
   @doc """
   Builds a config from the host's options.
@@ -234,9 +286,11 @@ defmodule StatifierOban.Config do
   to `nil`, and `:max_fan_out` is optional and defaults to `1_000` (see
   the moduledoc's fan-out section). `:invoke_timeout`,
   `:child_start_timeout` and `:timer_timeout` are optional and default
-  to `:infinity` (see the moduledoc's run-time bounds section). Unknown
-  options are rejected rather than ignored, so a typo fails loudly
-  instead of silently dropping a setting.
+  to `:infinity` (see the moduledoc's run-time bounds section).
+  `:unresolved_handler` is optional and defaults to `:retry` - the other
+  accepted value is `:cancel` (see the moduledoc's unresolvable-handler
+  policy section). Unknown options are rejected rather than ignored, so
+  a typo fails loudly instead of silently dropping a setting.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) when is_list(opts) do
@@ -253,7 +307,8 @@ defmodule StatifierOban.Config do
          {:ok, max_fan_out} <- fetch_max_fan_out(opts),
          {:ok, invoke_timeout} <- fetch_timeout(opts, :invoke_timeout),
          {:ok, child_start_timeout} <- fetch_timeout(opts, :child_start_timeout),
-         {:ok, timer_timeout} <- fetch_timeout(opts, :timer_timeout) do
+         {:ok, timer_timeout} <- fetch_timeout(opts, :timer_timeout),
+         {:ok, unresolved_handler} <- fetch_unresolved_handler(opts) do
       {:ok,
        %__MODULE__{
          oban: oban,
@@ -266,7 +321,8 @@ defmodule StatifierOban.Config do
          max_fan_out: max_fan_out,
          invoke_timeout: invoke_timeout,
          child_start_timeout: child_start_timeout,
-         timer_timeout: timer_timeout
+         timer_timeout: timer_timeout,
+         unresolved_handler: unresolved_handler
        }}
     end
   end
@@ -342,6 +398,19 @@ defmodule StatifierOban.Config do
   defp timeout_kind(:invoke_timeout), do: :invoke
   defp timeout_kind(:child_start_timeout), do: :child_start
   defp timeout_kind(:timer_timeout), do: :timer
+
+  # `Keyword.get/3`'s default only applies when the key is absent, so an
+  # explicit `unresolved_handler: nil` is not read as "use the default" -
+  # it falls through the guard below and is rejected as invalid, the same
+  # way any other unrecognized value is.
+  @spec fetch_unresolved_handler(keyword()) ::
+          {:ok, unresolved_handler()} | {:error, term()}
+  defp fetch_unresolved_handler(opts) do
+    case Keyword.get(opts, :unresolved_handler, @default_unresolved_handler) do
+      policy when policy in [:retry, :cancel] -> {:ok, policy}
+      other -> {:error, {:invalid_option, :unresolved_handler, other}}
+    end
+  end
 
   defp check_unknown(opts) do
     case Keyword.keys(opts) -- @known_options do
