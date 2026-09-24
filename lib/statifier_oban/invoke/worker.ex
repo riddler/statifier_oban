@@ -1,7 +1,7 @@
 defmodule StatifierOban.Invoke.Worker do
   # How far past a job's run-time bound Oban's own timeout sits, as a
   # backstop for the work around the handler call. Read by the moduledoc.
-  @backstop_margin_ms 5_000
+  @backstop_margin_ms StatifierOban.JobTimeout.backstop_margin_ms()
 
   @moduledoc """
   The Oban worker a base-handler invocation becomes.

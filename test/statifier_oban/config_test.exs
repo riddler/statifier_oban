@@ -1,7 +1,8 @@
 defmodule StatifierOban.ConfigTest do
   use ExUnit.Case, async: true
 
-  alias StatifierOban.Config
+  alias StatifierOban.{Config, JobTimeout}
+  alias StatifierOban.Invoke.Worker, as: InvokeWorker
 
   # sabotage: fetch_required :error -> {:ok, :fallback} broke the missing-
   # option doctests; check_unknown -> :ok broke the unknown-options doctest
@@ -231,9 +232,46 @@ defmodule StatifierOban.ConfigTest do
   # sabotage: fetch_timeout's guard was loosened to `ms >= 0` - went red
   # (a zero bound built a config), reverted.
   test "new/1 rejects a bound that is not a positive integer or :infinity" do
-    for key <- @bounds, bad <- [0, -1, 1.5, "1000", nil, :forever] do
+    for key <- @bounds, bad <- [0, -1, 1.5, "1000", nil, :forever, 5_000_000_000] do
       assert {:error, {:invalid_option, ^key, ^bad}} =
                Config.new([oban: MyHost.Oban, timers_queue: :t] ++ [{key, bad}])
     end
+  end
+
+  # A bound above the BEAM's receive-after limit fails every attempt at
+  # the wait instead of bounding it, so each is capped there, and the
+  # invoke bound lower by the backstop margin its worker adds.
+  #
+  # sabotage: fetch_timeout's `ms <= max` guard was dropped - went red
+  # (4_294_967_296 built a config), reverted.
+  # sabotage: `max_bound(:invoke)` returned the bare limit - went red
+  # (4_294_962_296 built an invoke config), reverted.
+  test "new/1 caps each bound at the largest timeout the BEAM accepts" do
+    for {key, max} <- [
+          invoke_timeout: 4_294_962_295,
+          child_start_timeout: 4_294_967_295,
+          timer_timeout: 4_294_967_295
+        ] do
+      assert {:ok, config} = Config.new([oban: MyHost.Oban, timers_queue: :t] ++ [{key, max}])
+      assert Map.fetch!(config, key) == max
+
+      over = max + 1
+
+      assert {:error, {:invalid_option, ^key, ^over}} =
+               Config.new([oban: MyHost.Oban, timers_queue: :t] ++ [{key, over}])
+    end
+  end
+
+  # The cap exists because of this: the largest invoke bound plus the
+  # backstop margin is still a timeout the BEAM accepts, both at the
+  # worker's own wait and at Oban's.
+  #
+  # sabotage: `max_bound(:invoke)` returned the bare limit - went red (the
+  # bound plus margin exceeded the limit), reverted.
+  test "the largest invoke bound plus its backstop stays a valid timeout" do
+    max = JobTimeout.max_bound(:invoke)
+    job = %Oban.Job{meta: %{"timeout" => max}}
+
+    assert InvokeWorker.timeout(job) == 4_294_967_295
   end
 end
