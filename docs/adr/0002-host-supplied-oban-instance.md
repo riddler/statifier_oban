@@ -118,3 +118,89 @@ are untouched (`lib/statifier_oban/timer/delivery.ex`, read at `2ffc3b7`).
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
 no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+
+## Note (2026-09-23): a host's transaction around an insert, and Oban's retry
+
+A Note, not an amendment: it decides nothing new and changes no code. It
+records what happens when a host calls this package's inserts and cancels
+inside a transaction of its own - the sending step's, when the host's
+executor runs its effects inside one - and the one setting that governs
+it. Every cite below was read at `09e36f7`, against oban 2.23.1 and
+db_connection 2.10.2, the versions `mix.lock` resolves.
+
+**The calls.** `StatifierOban.Timer.schedule/3` inserts a job with
+`Oban.insert/2`, and so does `StatifierOban.Invoke.Handler.perform_start/3`,
+in its private `enqueue/4`. `StatifierOban.Timer.cancel/3`,
+`StatifierOban.Invoke.Handler.perform_cancel/3` and
+`StatifierOban.Invoke.FanOut.cancel_unstarted/3` cancel with
+`Oban.cancel_all_jobs/2`. `StatifierOban.Invoke.FanOut.start/5` inserts one
+job per child in its private `enqueue_all/6`; this package calls it from a
+fan-out job's perform, the private `fan_out/7` in
+`StatifierOban.Invoke.Worker`, and Oban runs a perform in no transaction
+(`Oban.Queue.Executor.perform/1`). A host that calls it inside a
+transaction of its own meets the insert edge below.
+
+**An insert runs in Oban's retrying transaction; a cancel does not.** On
+the Basic engine, `Oban.Engines.Basic.insert_job/3` makes the insert
+inside `Oban.Repo.transaction/3`, called with the config and the function
+and no options. A cancel is one update in no transaction:
+`Oban.Engines.Basic.cancel_all_jobs/2` calls `Oban.Repo.update_all/3`, and
+the retry loop below lives only in `Oban.Repo.transaction/3`. A cancel
+whose statement fails raises to its caller, unretried. On the Lite engine
+this package's suite runs, `Oban.Engines.Lite.insert_job/3` opens no
+transaction at all, so nothing below reaches the suite.
+
+**What the retry does when it is nested.** `Oban.Repo.transaction/3`
+rescues `DBConnection.ConnectionError`, `UndefinedFunctionError`, and
+`Postgrex.Error` and `MyXQL.Error` when those are loaded (`Oban.Errors`),
+and retries: up to `:retry` attempts (default 5), sleeping `:delay`
+(default 500 ms) times the attempt, jittered; or, for a deadlock, a
+lock-not-available or a serialization failure, up to `:expected_retry`
+attempts (default 20) at `:expected_delay` (default 10 ms). Inside an
+enclosing transaction an attempt gets no savepoint: the clause of
+`DBConnection.transaction/3` for a connection already in a transaction
+runs the function directly and, on a raise, marks the connection aborted
+before re-raising. From then on every statement on that connection raises
+`DBConnection.ConnectionError` with "transaction rolling back" (the
+aborted-status clause of `DBConnection.Holder`'s private
+`handle_or_cleanup/5`), which is itself retryable. So no retry can
+succeed: each attempt fails the same way, and the sleeps between them hold
+the enclosing transaction open until the budget is spent. What happens
+then is `:on_exhausted`'s:
+
+- `:raise`, the default, re-raises the last error - the "transaction
+  rolling back" one, not the statement's error that aborted the
+  transaction. This is the masking Oban's documentation of
+  `Oban.Repo.transaction/3` warns of under "Nested Transactions", where it
+  asks for `retry: false`.
+- `:log` logs and returns `{:error, exception}`, which `Oban.insert/2`
+  hands back unchanged; `Timer.schedule/3` and `perform_start/3` then
+  answer `{:error, exception}` over a transaction already lost.
+
+Either way the enclosing transaction does not commit: `DBConnection`'s
+private `conclude/2` turns an aborted transaction into a rollback when its
+outermost function returns.
+
+**What a host sets.** The per-call `retry: false` Oban documents cannot be
+given from here: `Oban.Engines.Basic.insert_job/3` passes no options to
+its transaction, so an option on `Oban.insert/3` does not reach it. The
+one setting that does is the host's compile-time
+`config :oban, Oban.Repo, retry_opts: [...]` (`Oban.Repo`'s moduledoc,
+"Retries"), which needs `:oban` recompiled and governs every
+`Oban.Repo.transaction/3` the host's instance makes, Oban's own job
+fetching included (`Oban.Engines.Basic.fetch_jobs/3`). A host whose
+executor calls the functions above inside its step's transaction and
+wants the statement's own error raised at once sets `retry: false` there
+and keeps `on_exhausted: :raise`; a host that keeps the defaults gets a
+raise after the budget, carrying the rolling-back error; a host that sets
+`on_exhausted: :log` gets the value above.
+
+**What this package does.** Nothing changes in `lib/`. It passes no retry
+option, because at this version none reaches the transaction, and it sets
+no Oban configuration, because the instance and its configuration are the
+host's (the Decision above). The Lite harness cannot represent this edge
+and no behaviour of this package depends on it, so the Decision's
+Postgres-harness clause is not reached. The question is worth reopening
+when an Oban version passes a per-call option through
+`Oban.Engines.Basic.insert_job/3` to its transaction. Recorded by
+`sob-i1e`.
