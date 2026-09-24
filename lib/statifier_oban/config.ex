@@ -126,6 +126,11 @@ defmodule StatifierOban.Config do
   (`StatifierOban.Timer.Worker`). Each is a positive integer of
   milliseconds or `:infinity`, and each defaults to `:infinity` - no
   bound, exactly what the workers did before the options existed.
+  A bound is capped by the largest timeout the BEAM accepts,
+  `4_294_967_295` ms (just under 50 days): `:child_start_timeout` and
+  `:timer_timeout` may be at most that, and `:invoke_timeout` at most
+  that less the invoke worker's 5000 ms backstop margin, `4_294_962_295`.
+  A larger integer is rejected as an invalid option.
 
   A bound is fixed at enqueue time: the enqueue site writes it into the
   job's meta, and the worker's `timeout/1` reads it back off the row, so
@@ -144,6 +149,8 @@ defmodule StatifierOban.Config do
   that follows the call. With the default `:infinity` no task is started
   and `run/1` runs in the job process, as it always has.
   """
+
+  alias StatifierOban.JobTimeout
 
   @enforce_keys [:oban, :timers_queue]
   defstruct [
@@ -318,15 +325,23 @@ defmodule StatifierOban.Config do
   # A bound is a duration, so the shape check is a duration's: a
   # positive integer of milliseconds, or `:infinity` for none. Zero is
   # rejected rather than read as "fail at once" - no attempt can do work
-  # in zero milliseconds - and so is anything that is not a number.
+  # in zero milliseconds - and so is anything that is not a number. The
+  # upper cap is the BEAM's: a bound above it would fail every attempt at
+  # the wait rather than bound it (`StatifierOban.JobTimeout.max_bound/1`).
   @spec fetch_timeout(keyword(), atom()) :: {:ok, timeout_bound()} | {:error, term()}
   defp fetch_timeout(opts, key) do
+    max = JobTimeout.max_bound(timeout_kind(key))
+
     case Keyword.get(opts, key, :infinity) do
       :infinity -> {:ok, :infinity}
-      ms when is_integer(ms) and ms > 0 -> {:ok, ms}
+      ms when is_integer(ms) and ms > 0 and ms <= max -> {:ok, ms}
       other -> {:error, {:invalid_option, key, other}}
     end
   end
+
+  defp timeout_kind(:invoke_timeout), do: :invoke
+  defp timeout_kind(:child_start_timeout), do: :child_start
+  defp timeout_kind(:timer_timeout), do: :timer
 
   defp check_unknown(opts) do
     case Keyword.keys(opts) -- @known_options do
