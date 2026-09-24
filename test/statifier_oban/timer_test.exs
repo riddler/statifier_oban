@@ -8,7 +8,7 @@ defmodule StatifierOban.TimerTest do
   alias Statifier.Effect.{Cancel, SendDelayed}
   alias StatifierOban.{Config, TestRepo, TestWorker, Timer}
   alias StatifierOban.TestCodecs.{Boom, NondeterministicXor, Xor}
-  alias StatifierOban.Timer.JobArgs
+  alias StatifierOban.Timer.{JobArgs, Worker}
 
   @oban_name StatifierOban.TimerTestOban
 
@@ -97,6 +97,38 @@ defmodule StatifierOban.TimerTest do
 
     assert DateTime.compare(scheduled_at, lower) == :gt
     assert DateTime.compare(scheduled_at, upper) == :lt
+  end
+
+  # -- the run-time bound (sob-eh8) ----------------------------------------
+
+  # sabotage: `schedule/3` handed `JobTimeout.put/2` `:infinity` instead
+  # of the config's `:timer_timeout` - went red (the stored job carried
+  # no bound), reverted.
+  test "a config's timer_timeout rides on the stored job and is the worker's timeout", %{
+    queue: queue,
+    scope_a: scope_a
+  } do
+    {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue, timer_timeout: 500)
+
+    assert {:ok, %Oban.Job{meta: meta} = job} =
+             Timer.schedule(config, scope_a, send_delayed_fixture())
+
+    assert meta["timeout"] == 500
+    assert Worker.timeout(job) == 500
+  end
+
+  # sabotage: `JobTimeout.put/2`'s `:infinity` clause wrote the key as the
+  # string "infinity" - went red (the default config's job carried a
+  # "timeout" key), reverted.
+  test "a config left at the default bound stores no bound, and the job has no timeout", %{
+    config: config,
+    scope_a: scope_a
+  } do
+    assert {:ok, %Oban.Job{meta: meta} = job} =
+             Timer.schedule(config, scope_a, send_delayed_fixture())
+
+    refute Map.has_key?(meta, "timeout")
+    assert Worker.timeout(job) == :infinity
   end
 
   # sabotage: the schedule head's `target: nil` pattern was relaxed to any

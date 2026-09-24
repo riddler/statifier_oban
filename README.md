@@ -461,6 +461,51 @@ them; `StatifierOban.Invoke.FanOut.cancel_unstarted/3` is the other door,
 for the indices whose start job has not run yet and which therefore have
 no execution record to cancel.
 
+## Bounding a job's run time
+
+By default no job this package enqueues has a run-time bound: an attempt
+runs until its work returns. Three options set one per job kind, each in
+milliseconds or `:infinity`:
+
+| Option | Default | What it bounds |
+|---|---|---|
+| `:invoke_timeout` | `:infinity` | one attempt of an invoke job - the handler's `run/1` or `run/2` |
+| `:child_start_timeout` | `:infinity` | one attempt of a fan-out child start job - the `ChildStarter` call |
+| `:timer_timeout` | `:infinity` | one attempt of a fired-timer job - the delivery of the fired event |
+
+```elixir
+{:ok, config} =
+  StatifierOban.Config.new(
+    oban: MyApp.Oban,
+    timers_queue: :statifier_timers,
+    invoke_queue: :statifier_invokes,
+    invoke_timeout: :timer.minutes(2)
+  )
+```
+
+The bound is fixed when the job is enqueued: it is written into the job's
+meta, and each worker's `timeout/1` reads it back off the row. A job
+stored before the host sets or changes a bound keeps the bound it was
+stored with, and a job with none on its row runs unbounded. An attempt
+that runs past its bound fails with `Oban.TimeoutError` and retries while
+attempts remain, like any other failed attempt.
+
+The invoke bound is also enforced inside the worker, so a chart still
+hears about an invocation that timed out for good. The handler call runs
+in a task linked to the job process; when it outlives the bound, the
+attempt raises `Oban.TimeoutError` itself, and the last attempt delivers
+`error.communication.invoke.<invoke_id>` with `reason: "run_crashed"`
+and the timeout message as `detail` - the same class a raising handler's
+last attempt delivers (ADR-0005). The invoke worker's `timeout/1` returns
+the bound plus a 5-second margin, a backstop for the work around the
+call. A handler that reads its own process (`self()`, the process
+dictionary) sees the task's when a bound is set; with the `:infinity`
+default no task is started.
+
+A host running `Oban.Plugins.Lifeline` can set its `:rescue_after` above
+the largest bound it configures (for invoke jobs, the bound plus the
+margin), rather than guessing at a ceiling nothing enforces.
+
 ## The contract this package implements
 
 The host-facing pattern is already specified upstream, and this package is one

@@ -1,4 +1,8 @@
 defmodule StatifierOban.Invoke.Worker do
+  # How far past a job's run-time bound Oban's own timeout sits, as a
+  # backstop for the work around the handler call. Read by the moduledoc.
+  @backstop_margin_ms 5_000
+
   @moduledoc """
   The Oban worker a base-handler invocation becomes.
 
@@ -99,8 +103,9 @@ defmodule StatifierOban.Invoke.Worker do
 
   - `"run_failed"` - the last attempt returned `{:error, reason}`.
     `:detail` is that reason, inspected.
-  - `"run_crashed"` - the last attempt raised or exited. `:detail` is
-    the exception message, or the exit reason inspected.
+  - `"run_crashed"` - the last attempt raised, exited, or ran past the
+    job's run-time bound. `:detail` is the exception message (for a
+    bound, `Oban.TimeoutError`'s), or the exit reason inspected.
   - `"undecodable"` - the stored row could not be rebuilt into an
     effect, so the job cancels rather than retrying. `:detail` is the
     typed decode error, inspected.
@@ -126,6 +131,28 @@ defmodule StatifierOban.Invoke.Worker do
   nothing about the invocation - they say the deploy is wrong - and
   `:invalid_delivery` has by definition no seam to deliver through.
   ADR-0005 records that limit rather than leaving it to be inferred.
+
+  ## The run-time bound
+
+  A job whose meta carries a bound - the config's `:invoke_timeout`,
+  written by `StatifierOban.Invoke.Handler` at enqueue - runs the
+  handler's `run/1` (or `run/2`) in a task linked to the job process
+  and waits at most that many milliseconds for it. A call that outlives
+  the bound is killed and the attempt raises `Oban.TimeoutError` from
+  inside `perform/1`, so it takes the path a raising handler takes: it
+  retries while attempts remain, and the terminal attempt delivers
+  `"run_crashed"` on the way past (ADR-0005's 2026-09-24 Note). A raise,
+  exit or throw inside the task reaches the job process unchanged.
+
+  `timeout/1` returns the bound plus #{@backstop_margin_ms} ms, a
+  backstop that Oban enforces from outside the job process for the work
+  around the call - the decode before it and the delivery or fan-out
+  enqueue after it. A job killed
+  by the backstop delivers nothing, because Oban's kill runs no code in
+  the worker; the margin exists so the bound inside the worker is the
+  one that fires. A job with no bound on its row - the `:infinity`
+  default, and every job stored before the option existed - starts no
+  task, runs the handler in the job process, and has no timeout.
   """
 
   use Oban.Worker,
@@ -137,9 +164,17 @@ defmodule StatifierOban.Invoke.Worker do
     ]
 
   alias StatifierOban.Invoke.{FanOut, JobArgs}
-  alias StatifierOban.Telemetry
+  alias StatifierOban.{JobTimeout, Telemetry}
 
   @default_delivery StatifierOban.Invoke.Delivery.Session
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = job) do
+    case JobTimeout.bound(job) do
+      :infinity -> :infinity
+      bound -> bound + @backstop_margin_ms
+    end
+  end
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta} = job) do
@@ -347,7 +382,7 @@ defmodule StatifierOban.Invoke.Worker do
           | {:fan_out, term(), keyword()}
           | {:error, {:run_failed, term()}}
   defp run(job, delivery, scope, handler, invoke) do
-    case call_run(handler, invoke, scope) do
+    case call_bounded(JobTimeout.bound(job), handler, invoke, scope) do
       {:ok, donedata} -> {:ok, donedata}
       {:fan_out, items} -> {:fan_out, items, []}
       {:fan_out, items, opts} -> {:fan_out, items, opts}
@@ -391,6 +426,47 @@ defmodule StatifierOban.Invoke.Worker do
     else
       handler.run(invoke)
     end
+  end
+
+  # The bound inside the worker (the moduledoc's run-time bound section).
+  # `:infinity` calls straight through in the job process, so a job with
+  # no bound behaves exactly as it did before the option existed. A
+  # finite bound runs the call in a linked task that captures every way
+  # out of it - a return, a raise, an exit, a throw - and replays it in
+  # the job process, so `run/5`'s rescue and catch arms see what they
+  # always saw. The link means a job process killed by Oban's backstop
+  # takes the task with it.
+  @spec call_bounded(JobTimeout.bound(), module(), Statifier.Effect.Invoke.t(), String.t()) ::
+          {:ok, term()}
+          | {:fan_out, term()}
+          | {:fan_out, term(), keyword()}
+          | {:error, term()}
+  defp call_bounded(:infinity, handler, invoke, scope), do: call_run(handler, invoke, scope)
+
+  defp call_bounded(bound, handler, invoke, scope) do
+    task = Task.async(fn -> capture(fn -> call_run(handler, invoke, scope) end) end)
+
+    case Task.yield(task, bound) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:returned, result}} -> result
+      {:ok, {:raised, exception, stacktrace}} -> reraise exception, stacktrace
+      {:ok, {:exited, reason}} -> exit(reason)
+      {:ok, {:thrown, value}} -> throw(value)
+      nil -> raise Oban.TimeoutError.exception({__MODULE__, bound})
+    end
+  end
+
+  @spec capture((-> term())) ::
+          {:returned, term()}
+          | {:raised, Exception.t(), Exception.stacktrace()}
+          | {:exited, term()}
+          | {:thrown, term()}
+  defp capture(fun) do
+    {:returned, fun.()}
+  rescue
+    exception -> {:raised, exception, __STACKTRACE__}
+  catch
+    :exit, reason -> {:exited, reason}
+    :throw, value -> {:thrown, value}
   end
 
   @spec run_exported?(module()) :: boolean()

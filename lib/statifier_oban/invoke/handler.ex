@@ -150,7 +150,7 @@ defmodule StatifierOban.Invoke.Handler do
 
   alias Statifier.Effect.Invoke
   alias Statifier.Invoke.Handler, as: UpstreamHandler
-  alias StatifierOban.{CancellableStates, Config, Telemetry}
+  alias StatifierOban.{CancellableStates, Config, JobTimeout, Telemetry}
   alias StatifierOban.Invoke.{JobArgs, Worker}
 
   @typedoc """
@@ -343,7 +343,9 @@ defmodule StatifierOban.Invoke.Handler do
   a fresh job (ADR-0003). The job lands in the config's
   `:invoke_queue` and carries the config's `:invoke_delivery` module in
   its meta; meta is not part of the unique fields, so a replay under a
-  reconfigured delivery still conflicts with the stored job.
+  reconfigured delivery still conflicts with the stored job. A finite
+  `:invoke_timeout` rides in the same meta as the job's run-time bound
+  (see `StatifierOban.Config`'s run-time bounds section).
 
   The config's `:opaque_codec` is fixed at enqueue time: read once from
   `handler.config()`, and run over the effect's host-opaque `params` and
@@ -377,7 +379,11 @@ defmodule StatifierOban.Invoke.Handler do
          changeset =
            Worker.new(args,
              queue: queue,
-             meta: %{"delivery" => Atom.to_string(config.invoke_delivery)}
+             meta:
+               JobTimeout.put(
+                 %{"delivery" => Atom.to_string(config.invoke_delivery)},
+                 config.invoke_timeout
+               )
            ),
          {:ok, job} <- Oban.insert(config.oban, changeset) do
       Telemetry.invoke_enqueued(scope, handler, invoke, job)

@@ -113,7 +113,7 @@ defmodule StatifierOban.Invoke.FanOut do
   import Ecto.Query, only: [where: 3]
 
   alias Statifier.Effect.Invoke
-  alias StatifierOban.{CancellableStates, Config, Telemetry}
+  alias StatifierOban.{CancellableStates, Config, JobTimeout, Telemetry}
   alias StatifierOban.Invoke.{ChildStarter, ChildStartWorker, JobArgs}
 
   @typedoc """
@@ -304,7 +304,8 @@ defmodule StatifierOban.Invoke.FanOut do
   defp enqueue_all(_config, _args, _queue, _starter, 0, _policy), do: {:empty, []}
 
   defp enqueue_all(config, args, queue, starter, count, policy) do
-    meta = %{"child_starter" => Atom.to_string(starter)}
+    meta =
+      JobTimeout.put(%{"child_starter" => Atom.to_string(starter)}, config.child_start_timeout)
 
     0..(count - 1)
     |> Enum.reduce_while(:ok, fn index, :ok ->

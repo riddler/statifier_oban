@@ -46,7 +46,7 @@ defmodule StatifierOban.Timer do
   import Ecto.Query, only: [group_by: 3, select: 3, where: 3]
 
   alias Statifier.Effect.{Cancel, SendDelayed}
-  alias StatifierOban.{CancellableStates, Config, Telemetry}
+  alias StatifierOban.{CancellableStates, Config, JobTimeout, Telemetry}
   alias StatifierOban.Timer.{CancellationKey, JobArgs, Key, Worker}
 
   # One grouped query carries one bind parameter per scope, plus the
@@ -78,7 +78,8 @@ defmodule StatifierOban.Timer do
   config's delivery module in its meta - meta is not part of the unique
   fields, so a replay under a reconfigured delivery still conflicts with
   the stored job (same scheduling decision) rather than inserting a
-  second one.
+  second one. A finite `:timer_timeout` rides in the same meta, and the
+  worker's `timeout/1` reads it back as the fired job's run-time bound.
   """
   @spec schedule(Config.t(), Key.scope(), SendDelayed.t()) ::
           {:ok, Oban.Job.t()} | {:error, schedule_error()}
@@ -92,7 +93,11 @@ defmodule StatifierOban.Timer do
           Worker.new(args,
             queue: config.timers_queue,
             scheduled_at: scheduled_at,
-            meta: %{"delivery" => Atom.to_string(config.delivery)}
+            meta:
+              JobTimeout.put(
+                %{"delivery" => Atom.to_string(config.delivery)},
+                config.timer_timeout
+              )
           )
 
         Oban.insert(config.oban, changeset)

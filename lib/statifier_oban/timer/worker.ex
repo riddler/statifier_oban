@@ -42,6 +42,15 @@ defmodule StatifierOban.Timer.Worker do
     about the host's code, fixable by a deploy, unlike the row facts
     above. A raise or exit out of the delivery module retries the same
     way, per the behaviour's contract.
+
+  `timeout/1` returns the job's run-time bound: the config's
+  `:timer_timeout`, written into the job's meta by
+  `StatifierOban.Timer.schedule/3`, or `:infinity` for a job whose row
+  carries none. Oban enforces it from outside the job process; an
+  attempt that runs past it fails with `Oban.TimeoutError` and retries
+  while attempts remain, exactly as a raise out of the delivery module
+  does. A fired timer has no failure door, so a timed-out last attempt
+  discards the job the way any other exhausted one does.
   """
 
   use Oban.Worker,
@@ -52,10 +61,13 @@ defmodule StatifierOban.Timer.Worker do
       states: Oban.Job.states()
     ]
 
-  alias StatifierOban.Telemetry
+  alias StatifierOban.{JobTimeout, Telemetry}
   alias StatifierOban.Timer.JobArgs
 
   @default_delivery StatifierOban.Timer.Delivery.Session
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = job), do: JobTimeout.bound(job)
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta} = job) do

@@ -78,6 +78,12 @@ defmodule StatifierOban.Config do
       iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, max_fan_out: 0)
       {:error, {:invalid_option, :max_fan_out, 0}}
 
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, invoke_timeout: 30_000)
+      {:ok, %StatifierOban.Config{oban: MyApp.Oban, timers_queue: :t, invoke_timeout: 30_000}}
+
+      iex> StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :t, timer_timeout: 0)
+      {:error, {:invalid_option, :timer_timeout, 0}}
+
   ## The `:opaque_codec` seam (ADR-0002 stance)
 
   `:opaque_codec` is optional and defaults to `nil` - identity, today's
@@ -110,6 +116,33 @@ defmodule StatifierOban.Config do
   records have reasoned about rather than a measurement of any
   particular deployment; a host that measures its own raises or lowers
   it here.
+
+  ## The run-time bounds
+
+  `:invoke_timeout`, `:child_start_timeout` and `:timer_timeout` bound
+  how long one attempt of each job kind may run: an invoke job
+  (`StatifierOban.Invoke.Worker`), a fan-out child start job
+  (`StatifierOban.Invoke.ChildStartWorker`) and a fired-timer job
+  (`StatifierOban.Timer.Worker`). Each is a positive integer of
+  milliseconds or `:infinity`, and each defaults to `:infinity` - no
+  bound, exactly what the workers did before the options existed.
+
+  A bound is fixed at enqueue time: the enqueue site writes it into the
+  job's meta, and the worker's `timeout/1` reads it back off the row, so
+  a job stored before a host changes its bound keeps the bound it was
+  stored with, and a job with no bound on its row runs unbounded. An
+  attempt that runs past its bound fails like any other failed attempt
+  and retries while attempts remain.
+
+  The invoke bound is also enforced inside the worker, around the
+  handler's `run/1` (or `run/2`): the call runs in a task linked to the
+  job process, and an attempt that outlives the bound fails with
+  `Oban.TimeoutError` raised from inside `perform/1`, so a timed-out
+  terminal attempt still delivers `error.communication.invoke.<invoke_id>`
+  with the `"run_crashed"` class (ADR-0005). `timeout/1` on that worker
+  returns the bound plus a fixed margin, as a backstop for the delivery
+  that follows the call. With the default `:infinity` no task is started
+  and `run/1` runs in the job process, as it always has.
   """
 
   @enforce_keys [:oban, :timers_queue]
@@ -121,7 +154,10 @@ defmodule StatifierOban.Config do
     :child_starter,
     delivery: StatifierOban.Timer.Delivery.Session,
     invoke_delivery: StatifierOban.Invoke.Delivery.Session,
-    max_fan_out: 1_000
+    max_fan_out: 1_000,
+    invoke_timeout: :infinity,
+    child_start_timeout: :infinity,
+    timer_timeout: :infinity
   ]
 
   @typedoc """
@@ -143,6 +179,8 @@ defmodule StatifierOban.Config do
   `StatifierOban.Invoke.ChildStarter` that fan-out child start jobs
   create their child through (`nil` on a host with no fan-out), and
   `:max_fan_out` is the positive integer cap on a fan-out's width.
+  `:invoke_timeout`, `:child_start_timeout` and `:timer_timeout` are the
+  per-attempt run-time bounds, in milliseconds or `:infinity`.
   """
   @type t :: %__MODULE__{
           oban: Oban.name(),
@@ -152,8 +190,14 @@ defmodule StatifierOban.Config do
           child_starter: module() | nil,
           delivery: module(),
           invoke_delivery: module(),
-          max_fan_out: pos_integer()
+          max_fan_out: pos_integer(),
+          invoke_timeout: timeout_bound(),
+          child_start_timeout: timeout_bound(),
+          timer_timeout: timeout_bound()
         }
+
+  @typedoc "A per-attempt run-time bound: milliseconds, or `:infinity` for none."
+  @type timeout_bound :: pos_integer() | :infinity
 
   @known_options [
     :oban,
@@ -163,7 +207,10 @@ defmodule StatifierOban.Config do
     :invoke_delivery,
     :opaque_codec,
     :child_starter,
-    :max_fan_out
+    :max_fan_out,
+    :invoke_timeout,
+    :child_start_timeout,
+    :timer_timeout
   ]
   @default_delivery StatifierOban.Timer.Delivery.Session
   @default_invoke_delivery StatifierOban.Invoke.Delivery.Session
@@ -178,9 +225,11 @@ defmodule StatifierOban.Config do
   `:opaque_codec` is optional and defaults to `nil` (identity - see the
   moduledoc's ADR-0002 stance); `:child_starter` is optional and defaults
   to `nil`, and `:max_fan_out` is optional and defaults to `1_000` (see
-  the moduledoc's fan-out section). Unknown options are rejected rather
-  than ignored, so a typo fails loudly instead of silently dropping a
-  setting.
+  the moduledoc's fan-out section). `:invoke_timeout`,
+  `:child_start_timeout` and `:timer_timeout` are optional and default
+  to `:infinity` (see the moduledoc's run-time bounds section). Unknown
+  options are rejected rather than ignored, so a typo fails loudly
+  instead of silently dropping a setting.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) when is_list(opts) do
@@ -194,7 +243,10 @@ defmodule StatifierOban.Config do
            fetch_delivery(opts, :invoke_delivery, @default_invoke_delivery),
          {:ok, opaque_codec} <- fetch_opaque_codec(opts),
          {:ok, child_starter} <- fetch_optional_module(opts, :child_starter),
-         {:ok, max_fan_out} <- fetch_max_fan_out(opts) do
+         {:ok, max_fan_out} <- fetch_max_fan_out(opts),
+         {:ok, invoke_timeout} <- fetch_timeout(opts, :invoke_timeout),
+         {:ok, child_start_timeout} <- fetch_timeout(opts, :child_start_timeout),
+         {:ok, timer_timeout} <- fetch_timeout(opts, :timer_timeout) do
       {:ok,
        %__MODULE__{
          oban: oban,
@@ -204,7 +256,10 @@ defmodule StatifierOban.Config do
          invoke_delivery: invoke_delivery,
          opaque_codec: opaque_codec,
          child_starter: child_starter,
-         max_fan_out: max_fan_out
+         max_fan_out: max_fan_out,
+         invoke_timeout: invoke_timeout,
+         child_start_timeout: child_start_timeout,
+         timer_timeout: timer_timeout
        }}
     end
   end
@@ -257,6 +312,19 @@ defmodule StatifierOban.Config do
     case Keyword.get(opts, :max_fan_out, @default_max_fan_out) do
       cap when is_integer(cap) and cap > 0 -> {:ok, cap}
       other -> {:error, {:invalid_option, :max_fan_out, other}}
+    end
+  end
+
+  # A bound is a duration, so the shape check is a duration's: a
+  # positive integer of milliseconds, or `:infinity` for none. Zero is
+  # rejected rather than read as "fail at once" - no attempt can do work
+  # in zero milliseconds - and so is anything that is not a number.
+  @spec fetch_timeout(keyword(), atom()) :: {:ok, timeout_bound()} | {:error, term()}
+  defp fetch_timeout(opts, key) do
+    case Keyword.get(opts, key, :infinity) do
+      :infinity -> {:ok, :infinity}
+      ms when is_integer(ms) and ms > 0 -> {:ok, ms}
+      other -> {:error, {:invalid_option, key, other}}
     end
   end
 
