@@ -10,6 +10,13 @@ fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/main
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.13.0] 2026-09-24
+
+### Added
+
+- `StatifierOban.Config` takes `:invoke_timeout`, `:child_start_timeout` and `:timer_timeout` (milliseconds up to the BEAM's `4_294_967_295` ms timeout limit, less the 5000 ms backstop for `:invoke_timeout`, or `:infinity`, the default), a per-attempt run-time bound for each job kind; a timed-out invoke's last attempt delivers `error.communication.invoke.<invoke_id>` with `reason: "run_crashed"`.
+- `StatifierOban.Config` takes `:unresolved_handler` (`:retry`, the default, or `:cancel`); under `:cancel` an invoke job whose handler module does not resolve cancels on the attempt that finds it and delivers `error.communication.invoke.<invoke_id>` with `reason: "invalid_handler"` instead of retrying to exhaustion.
+
 ## [0.12.0] 2026-09-23
 
 `statifier_persistence` becomes an optional dependency at `~> 0.13`.
