@@ -21,6 +21,8 @@ defmodule StatifierOban.RestartRoundTripTest do
   @oban_before StatifierOban.RoundTripObanBefore
   @oban_after StatifierOban.RoundTripObanAfter
 
+  @three_days_ms 3 * 86_400_000
+
   # The W3C text form `docs/telemetry.md` directs a tracing host to store:
   # strings only, so nothing in it is node-local and nothing names an atom
   # the node reading the row days later may never have seen.
@@ -92,6 +94,66 @@ defmodule StatifierOban.RestartRoundTripTest do
 
     assert job_count(queue) == 1
     assert %{success: 0, cancelled: 0, failure: 0} = drain(@oban_after, queue)
+
+    assert %{status: :running, configuration: configuration, queued_events: 0} =
+             Statifier.Session.status(pid)
+
+    assert MapSet.member?(configuration, "b")
+    refute MapSet.member?(configuration, "c")
+  end
+
+  # A timer days out, as `docs/long-timers.md` describes it: the fire time
+  # is a column on the row, fixed at schedule time, so a restart neither
+  # fires it early nor loses it, and the unique guard still holds for the
+  # whole wait. The drains pass a DateTime cut-off, which stands in for
+  # the clock: a cut-off a day short of the fire time must fire nothing.
+  # sabotage: Timer.schedule/3 computed scheduled_at as
+  # `DateTime.utc_now()`, dropping the delay - went red here (the row that
+  # survived the restart carried a fire time 1 ms after arming, not three
+  # days) - reverted.
+  test "schedule days out -> restart -> fire: still unique, fires once at its time",
+       %{queue: queue, scope: scope, before: config_before, after: config_after} do
+    start_session!(scope)
+    effect = %{send_delayed_fixture() | delay_ms: @three_days_ms}
+
+    armed_at = DateTime.utc_now()
+
+    assert {:ok, %Oban.Job{id: id, conflict?: false}} =
+             Timer.schedule(config_before, scope, effect)
+
+    restart()
+
+    # The row outlived every process, still waiting, with the fire time
+    # it was given at insert.
+    assert %Oban.Job{state: "scheduled", scheduled_at: fire_at} = TestRepo.get!(Oban.Job, id)
+    assert DateTime.diff(fire_at, armed_at, :millisecond) >= @three_days_ms
+    assert DateTime.diff(fire_at, armed_at, :millisecond) < @three_days_ms + 60_000
+
+    # The resumed session under the same scope replays the drive: the
+    # guard still holds days before the fire, so the replay is a no-op.
+    pid = start_session!(scope)
+
+    assert {:ok, %Oban.Job{id: ^id, conflict?: true}} =
+             Timer.schedule(config_after, scope, effect)
+
+    assert job_count(queue) == 1
+
+    # Two days on, the timer is not due: nothing fires.
+    assert %{success: 0, cancelled: 0, failure: 0} =
+             drain(@oban_after, queue, DateTime.add(armed_at, 2 * 86_400, :second))
+
+    assert %Oban.Job{state: "scheduled", scheduled_at: ^fire_at} = TestRepo.get!(Oban.Job, id)
+
+    # Past the fire time, the new instance's worker delivers it, once.
+    assert %{success: 1, cancelled: 0, failure: 0} =
+             drain(@oban_after, queue, DateTime.add(fire_at, 60, :second))
+
+    assert %Oban.Job{state: "completed", attempt: 1} = TestRepo.get!(Oban.Job, id)
+
+    assert {:ok, %Oban.Job{id: ^id, conflict?: true}} =
+             Timer.schedule(config_after, scope, effect)
+
+    assert job_count(queue) == 1
 
     assert %{status: :running, configuration: configuration, queued_events: 0} =
              Statifier.Session.status(pid)
@@ -238,8 +300,8 @@ defmodule StatifierOban.RestartRoundTripTest do
     )
   end
 
-  defp drain(oban_name, queue) do
-    Oban.drain_queue(oban_name, queue: queue, with_scheduled: true)
+  defp drain(oban_name, queue, with_scheduled \\ true) do
+    Oban.drain_queue(oban_name, queue: queue, with_scheduled: with_scheduled)
   end
 
   defp start_session!(scope) do

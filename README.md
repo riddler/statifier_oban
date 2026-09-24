@@ -569,6 +569,15 @@ to the documented default. So the seam is chosen per config at schedule time
 and travels with the job - a host that changes it does not re-key jobs
 already stored, because the unique fields exclude the meta on purpose.
 
+## Timers days out
+
+A timer that waits days is one job row for all of that time, and the row is
+also its dedup guard. `docs/long-timers.md` says what such a timer survives
+(a restart, a paused queue, a leader change), what it does not (pruning of
+its row once it fired or was cancelled, a changed scope, a queue that stops
+running, node death mid-delivery without a rescue), and the Oban settings a
+host must keep for that to hold.
+
 ## Timers as a chart pin source
 
 Before `statifier_persistence` retires a chart it asks whether anything still
