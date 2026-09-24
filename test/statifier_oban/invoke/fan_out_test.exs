@@ -80,6 +80,19 @@ defmodule StatifierOban.Invoke.FanOutTest do
     def run(%Invoke{params: params}), do: {:fan_out, Map.fetch!(params, "items")}
   end
 
+  defmodule BoundedStartHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    alias StatifierOban.Invoke.FanOutTest
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: FanOutTest.config(child_start_timeout: 750)
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{params: params}), do: {:fan_out, Map.fetch!(params, "items")}
+  end
+
   defmodule FailingStarter do
     @moduledoc false
     @behaviour StatifierOban.Invoke.ChildStarter
@@ -169,6 +182,34 @@ defmodule StatifierOban.Invoke.FanOutTest do
     assert second.args["index"] == 1
     assert second.args["child_count"] == 2
     assert first.meta["child_starter"] == Atom.to_string(RecordingStarter)
+  end
+
+  # sabotage: `enqueue_all/6` built its meta without `JobTimeout.put/2` -
+  # went red (the start jobs carried no bound), reverted.
+  test "a config's child_start_timeout rides on every start job and is the worker's timeout" do
+    insert_fan_out!("sess_fo_bound", "inv_bound", ["a", "b"], [], BoundedStartHandler)
+
+    assert %{success: 1} = drain()
+
+    assert [first, second] = start_jobs("sess_fo_bound", "inv_bound")
+
+    assert first.meta["timeout"] == 750
+    assert second.meta["timeout"] == 750
+    assert first.meta["child_starter"] == Atom.to_string(RecordingStarter)
+    assert ChildStartWorker.timeout(first) == 750
+  end
+
+  # sabotage: `JobTimeout.put/2`'s `:infinity` clause wrote the key as the
+  # string "infinity" - went red (the default config's start jobs carried
+  # a "timeout" key), reverted.
+  test "a config left at the default bound stores no bound on the start jobs" do
+    insert_fan_out!("sess_fo_nobound", "inv_nobound", ["a"])
+
+    assert %{success: 1} = drain()
+
+    assert [start] = start_jobs("sess_fo_nobound", "inv_nobound")
+    refute Map.has_key?(start.meta, "timeout")
+    assert ChildStartWorker.timeout(start) == :infinity
   end
 
   # The fan-out job itself answers nothing: the invocation stays open

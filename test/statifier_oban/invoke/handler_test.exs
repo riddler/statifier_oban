@@ -62,6 +62,32 @@ defmodule StatifierOban.Invoke.HandlerTest do
     def run(%Invoke{}), do: {:error, :gateway_down}
   end
 
+  # The acceptance handler for the run-time bound (sob-eh8): a config
+  # bounding every attempt at one second, and work that takes two.
+  defmodule OverrunningHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config do
+      {:ok, config} =
+        Config.new(
+          oban: StatifierOban.TestInvokeHandler.oban_name(),
+          timers_queue: "t",
+          invoke_queue: StatifierOban.TestInvokeHandler.queue(),
+          invoke_timeout: 1_000
+        )
+
+      config
+    end
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}) do
+      Process.sleep(2_000)
+      {:ok, %{"result" => "too late"}}
+    end
+  end
+
   defmodule NoQueueHandler do
     @moduledoc false
     use StatifierOban.Invoke.Handler
@@ -217,6 +243,57 @@ defmodule StatifierOban.Invoke.HandlerTest do
     wait_until(fn ->
       Statifier.Session.status(session).configuration == MapSet.new(["needs_attention"])
     end)
+  end
+
+  # sabotage: `Handler.enqueue/4` wrote the meta without
+  # `JobTimeout.put/2` - went red (the stored job carried no bound),
+  # reverted.
+  test "acceptance: a config's invoke_timeout fails the overrunning attempt and the terminal one parks the execution" do
+    {:ok, machine} = Statifier.compile(@failure_chart)
+
+    {:ok, session} =
+      Statifier.Session.start_link(machine,
+        invoke_handlers: %{@failure_type => OverrunningHandler}
+      )
+
+    scope = Statifier.Session.session_id(session)
+
+    wait_until(fn -> match?([_job], stored_jobs(scope, "inv_fail_e2e")) end)
+    [%Oban.Job{id: id, meta: meta}] = stored_jobs(scope, "inv_fail_e2e")
+
+    assert meta["timeout"] == 1_000
+
+    TestRepo.update_all(where(Oban.Job, [j], j.id == ^id), set: [max_attempts: 1])
+
+    drain()
+
+    assert [%Oban.Job{state: "discarded", errors: [%{"error" => error} | _rest]}] =
+             stored_jobs(scope, "inv_fail_e2e")
+
+    assert error =~ "Oban.TimeoutError"
+    assert error =~ "timed out after 1000ms"
+
+    wait_until(fn ->
+      Statifier.Session.status(session).configuration == MapSet.new(["needs_attention"])
+    end)
+  end
+
+  # sabotage: `JobTimeout.put/2`'s `:infinity` clause wrote the key as
+  # the string "infinity" - went red (the default config's job carried a
+  # "timeout" key), reverted.
+  test "a config left at the default bound stores no bound on the job" do
+    scope = "sess_invoke_nobound_#{unique()}"
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("inv_nobound")},
+               ctx_for(scope)
+             )
+
+    assert [%Oban.Job{meta: meta}] = stored_jobs(scope, "inv_nobound")
+    refute Map.has_key?(meta, "timeout")
+    assert Worker.timeout(%Oban.Job{meta: meta}) == :infinity
   end
 
   # sabotage: the base's injected `cancel/2` planned `{:ok, []}` instead

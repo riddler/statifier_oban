@@ -98,6 +98,58 @@ defmodule StatifierOban.Invoke.WorkerTest do
     def run(%Invoke{}), do: raise(ArgumentError, "the payment gateway said no")
   end
 
+  # Outlives any bound these tests set, so a bounded attempt can only end
+  # by the bound firing.
+  defmodule SlowRunHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}) do
+      Process.sleep(2_000)
+      {:ok, %{"result" => "too late"}}
+    end
+  end
+
+  defmodule ExitingRunHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: exit(:gateway_gone)
+  end
+
+  defmodule ThrowingRunHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: throw(:gateway_thrown)
+  end
+
+  # Answers with the pid it ran in. `Oban.drain_queue/2` runs each job in
+  # the calling process, so a handler run in the job process reports the
+  # test's own pid.
+  defmodule SelfReportingHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{"pid" => self()}}
+  end
+
   # The run-keyed handler shape sob-7b1 exists for: work that has to know
   # which execution it is working for, written against the base as
   # shipped.
@@ -490,6 +542,150 @@ defmodule StatifierOban.Invoke.WorkerTest do
              TestRepo.get!(Oban.Job, id)
 
     assert error =~ "undecodable"
+  end
+
+  # -- the run-time bound (sob-eh8) ----------------------------------------
+
+  # sabotage: `timeout/1` returned `JobTimeout.bound(job)` with no margin -
+  # went red (1_000 came back instead of 6_000), reverted.
+  test "timeout/1 is the row's bound plus the backstop margin, and :infinity without one" do
+    assert Worker.timeout(%Oban.Job{meta: %{"timeout" => 1_000}}) == 6_000
+    assert Worker.timeout(%Oban.Job{meta: %{}}) == :infinity
+    assert Worker.timeout(%Oban.Job{meta: %{"timeout" => "1000"}}) == :infinity
+    assert Worker.timeout(%Oban.Job{meta: %{"timeout" => 0}}) == :infinity
+  end
+
+  # sabotage: `call_bounded/4`'s `nil` arm returned `{:ok, nil}` instead of
+  # raising - went red (the job completed and delivered a nil answer),
+  # reverted.
+  test "an attempt that outlives its bound fails with Oban's timeout error and retries" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_slow", "inv_slow", SlowRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery), "timeout" => 100},
+      max_attempts: 3
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{state: "retryable", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_slow", "inv_slow")
+
+    assert error =~ "Oban.TimeoutError"
+    assert error =~ "timed out after 100ms"
+
+    refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
+    refute_received {:delivered_via_seam, _scope, _invoke_id, _donedata}
+  end
+
+  # sabotage: `run/5`'s rescue arm skipped `maybe_fail/7` for an
+  # `Oban.TimeoutError` - went red (the timed-out terminal attempt
+  # delivered nothing), reverted.
+  test "a timed-out terminal attempt delivers run_crashed through the seam, and discards" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_slow_last", "inv_slow_last", SlowRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery), "timeout" => 100},
+      max_attempts: 1
+    )
+
+    drain()
+
+    assert_received {:failed_via_seam, "sess_iw_slow_last", "inv_slow_last", failure}
+    assert failure[:reason] == "run_crashed"
+    assert failure[:attempts] == 1
+    assert failure[:detail] =~ "timed out after 100ms"
+
+    assert [%Oban.Job{state: "discarded", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_slow_last", "inv_slow_last")
+
+    assert error =~ "Oban.TimeoutError"
+  end
+
+  # sabotage: the `{:returned, result}` arm returned `{:ok, nil}` - went
+  # red (the delivered donedata was nil), reverted.
+  test "a bounded handler that answers in time delivers its donedata" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_bounded_ok", "inv_bounded_ok", TestInvokeHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery), "timeout" => 1_000}
+    )
+
+    assert %{success: 1, failure: 0, cancelled: 0} = drain()
+
+    assert_received {:delivered_via_seam, "sess_iw_bounded_ok", "inv_bounded_ok",
+                     %{"result" => "authorized"}}
+  end
+
+  # sabotage: the `{:raised, _, _}` arm re-raised a RuntimeError of its own
+  # - went red (the detail lost the handler's message), reverted.
+  test "a bounded handler's raise reaches the job unchanged and reports run_crashed" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_bounded_raise", "inv_bounded_raise", RaisingRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery), "timeout" => 1_000},
+      max_attempts: 1
+    )
+
+    drain()
+
+    assert_received {:failed_via_seam, _scope, "inv_bounded_raise", failure}
+    assert failure[:reason] == "run_crashed"
+    assert failure[:detail] =~ "the payment gateway said no"
+
+    assert [%Oban.Job{state: "discarded", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_bounded_raise", "inv_bounded_raise")
+
+    assert error =~ "ArgumentError"
+  end
+
+  # sabotage: the `{:exited, reason}` arm exited with `:normal` - went red
+  # (the detail no longer named the handler's exit reason), reverted.
+  test "a bounded handler's exit reaches the job unchanged and reports run_crashed" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_bounded_exit", "inv_bounded_exit", ExitingRunHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery), "timeout" => 1_000},
+      max_attempts: 1
+    )
+
+    drain()
+
+    assert_received {:failed_via_seam, _scope, "inv_bounded_exit", failure}
+    assert failure[:reason] == "run_crashed"
+    assert failure[:detail] =~ "gateway_gone"
+  end
+
+  # sabotage: the `{:thrown, value}` arm returned `{:error, value}` - went
+  # red (the error recorded `run_failed` rather than the throw), reverted.
+  test "a bounded handler's throw reaches the job unchanged" do
+    insert!(args_for("sess_iw_bounded_throw", "inv_bounded_throw", ThrowingRunHandler),
+      meta: %{"timeout" => 1_000}
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_bounded_throw", "inv_bounded_throw")
+
+    assert error =~ "gateway_thrown"
+    refute error =~ "run_failed"
+  end
+
+  # sabotage: `call_bounded/4`'s `:infinity` clause was removed, so an
+  # unbounded job ran through a task too - went red (the handler ran in
+  # a process other than the job's), reverted.
+  test "a job with no bound on its row runs the handler in the job process" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_unbounded", "inv_unbounded", SelfReportingHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)}
+    )
+
+    assert %{success: 1} = drain()
+
+    test_pid = self()
+    assert_received {:delivered_via_seam, _scope, "inv_unbounded", %{"pid" => ^test_pid}}
   end
 
   # -- helpers ------------------------------------------------------------

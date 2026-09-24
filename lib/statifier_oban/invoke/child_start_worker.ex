@@ -54,6 +54,15 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   execution record - the partially-started fan-out ADR-0007 decision 2 and
   `sb-ADR-0009` decision 8 both specify behaviour for, and which the
   settlement side is the one positioned to notice.
+
+  `timeout/1` returns the job's run-time bound: the config's
+  `:child_start_timeout`, written into the job's meta by
+  `StatifierOban.Invoke.FanOut`, or `:infinity` for a job whose row
+  carries none. Oban enforces it from outside the job process; a start
+  that runs past it fails with `Oban.TimeoutError` and retries while
+  attempts remain, which the seam's idempotence on the index makes
+  safe, and a timed-out last attempt is the exhausted start described
+  above.
   """
 
   use Oban.Worker,
@@ -65,7 +74,10 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
     ]
 
   alias StatifierOban.Invoke.{ChildStarter, JobArgs}
-  alias StatifierOban.Telemetry
+  alias StatifierOban.{JobTimeout, Telemetry}
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = job), do: JobTimeout.bound(job)
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta} = job) do

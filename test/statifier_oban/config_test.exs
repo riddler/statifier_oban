@@ -187,4 +187,53 @@ defmodule StatifierOban.ConfigTest do
                max_fan_out: 7
              )
   end
+
+  # -- the run-time bounds --------------------------------------------------
+
+  @bounds [:invoke_timeout, :child_start_timeout, :timer_timeout]
+
+  # sabotage: fetch_timeout's default was changed from :infinity to 30_000
+  # - went red (every bound came back 30_000), reverted.
+  test "new/1 defaults every run-time bound to :infinity" do
+    assert {:ok, config} = Config.new(oban: MyHost.Oban, timers_queue: :t)
+
+    assert %Config{invoke_timeout: :infinity, child_start_timeout: :infinity} = config
+    assert config.timer_timeout == :infinity
+  end
+
+  # sabotage: `new/1` built the struct with `timer_timeout: invoke_timeout`
+  # - went red (the timer bound came back as the invoke one), reverted.
+  test "new/1 carries each bound to its own field" do
+    assert {:ok, config} =
+             Config.new(
+               oban: MyHost.Oban,
+               timers_queue: :t,
+               invoke_timeout: 1_000,
+               child_start_timeout: 2_000,
+               timer_timeout: 3_000
+             )
+
+    assert %Config{invoke_timeout: 1_000, child_start_timeout: 2_000, timer_timeout: 3_000} =
+             config
+  end
+
+  # sabotage: fetch_timeout's :infinity arm was dropped - went red (an
+  # explicit :infinity was rejected as an invalid option), reverted.
+  test "new/1 accepts an explicit :infinity for each bound" do
+    for key <- @bounds do
+      assert {:ok, config} =
+               Config.new([oban: MyHost.Oban, timers_queue: :t] ++ [{key, :infinity}])
+
+      assert Map.fetch!(config, key) == :infinity
+    end
+  end
+
+  # sabotage: fetch_timeout's guard was loosened to `ms >= 0` - went red
+  # (a zero bound built a config), reverted.
+  test "new/1 rejects a bound that is not a positive integer or :infinity" do
+    for key <- @bounds, bad <- [0, -1, 1.5, "1000", nil, :forever] do
+      assert {:error, {:invalid_option, ^key, ^bad}} =
+               Config.new([oban: MyHost.Oban, timers_queue: :t] ++ [{key, bad}])
+    end
+  end
 end

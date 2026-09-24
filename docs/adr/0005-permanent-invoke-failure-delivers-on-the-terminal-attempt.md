@@ -362,3 +362,64 @@ The same Note's other two cites,
 The premise surface is `lib/statifier_oban/telemetry.ex` at `e3422bb`; the
 event set itself is fixed by ADR-0006 and enumerated by that record's suite,
 not here. Recorded by `sob-v9s` (campaign SF044).
+
+## Note (2026-09-24): a timed-out attempt fails inside the worker, and its terminal attempt delivers `"run_crashed"`
+
+`StatifierOban.Config` now takes a per-attempt run-time bound for each job
+kind - `:invoke_timeout`, `:child_start_timeout` and `:timer_timeout`, in
+milliseconds or `:infinity`, each defaulting to `:infinity` (`fetch_timeout/2`
+in `lib/statifier_oban/config.ex`). `Oban.Worker.timeout/1` is handed only the
+`%Oban.Job{}`, so the bound travels the way the delivery module already does:
+the enqueue site writes it into the job's meta and the worker reads it back
+off the row, and a row without it - every job stored before the option
+existed - reads as `:infinity` (`StatifierOban.JobTimeout.bound/1`). This
+Note records what a timed-out invoke attempt does, because the answer is not
+the one Oban gives by itself.
+
+**Why the bound is enforced inside the worker.** Oban enforces `timeout/1` by
+killing the job process from outside (`Oban.Queue.Executor.start_timeout/1`
+arms `:timer.exit_after/2`, in Oban 2.23). A killed process runs none of its
+own code, so the rescue and catch arms decision 3 relies on never run, and
+neither does `maybe_fail/7`: a terminal attempt killed that way would deliver
+nothing, and a chart parked on `error.communication` would hang on it - the
+outcome this record exists to prevent. So `StatifierOban.Invoke.Worker` runs
+the handler's `run/1` (or `run/2`) under the bound itself: in a task linked
+to the job process, waited on for at most the bound
+(`call_bounded/4` in `lib/statifier_oban/invoke/worker.ex`). A call that
+outlives it is killed and the attempt raises `Oban.TimeoutError` from inside
+`perform/1`.
+
+**What a timed-out attempt does.** It fails like a handler that raised. A
+non-terminal attempt delivers nothing and retries (decision 2). The terminal
+attempt delivers `error.communication.invoke.<invoke_id>` through the same
+door with `"reason"` `"run_crashed"`, `:detail` the `Oban.TimeoutError`
+message (which names the bound in milliseconds), and `:attempts` the terminal
+attempt (decision 1), and the job is discarded with that error recorded.
+**No new failure class, event name, function or error family is created**:
+decision 3's `"run_crashed"` - "the terminal attempt raising or exiting" - now
+also covers the terminal attempt running past its bound, because that is how
+the attempt ends. A raise, exit or throw inside the task reaches the job
+process unchanged, so a bounded handler that fails on its own still reports
+exactly what it reported before.
+
+**The backstop, and its limit.** The invoke worker's `timeout/1` returns the
+bound plus 5000 ms (`timeout/1` in `lib/statifier_oban/invoke/worker.ex`), so
+Oban's own kill still bounds the work around the call - the decode before it
+and the delivery or fan-out enqueue after it - without firing before the
+bound inside the worker does. An attempt the backstop kills delivers nothing,
+for the reason above; that is a limit of this Note, not an oversight, and the
+reopen trigger is a host whose delivery seam routinely outlives the margin.
+
+**The other two bounds do not touch this record.** A child start job and a
+fired-timer job have no failure door here, so `timeout/1` on those workers
+returns the bound itself and Oban's kill is the whole enforcement: the
+attempt fails with `Oban.TimeoutError` and retries, exactly as a raise out of
+the seam it calls does.
+
+**Nothing else in this record moves.** The terminal-attempt rule of decision
+1, the non-terminal silence of decision 2, the string `:detail` of decision 4,
+the seam of decision 5 and the environment-error limit of decision 6 are
+unchanged, and so is the retry an unresolvable handler gets. With the
+`:infinity` default no task is started and the handler runs in the job
+process, as before. The code this Note describes arrives in the same change
+as the Note, `sob-eh8`.
