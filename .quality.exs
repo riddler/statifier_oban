@@ -29,6 +29,17 @@
   credo: [
     strict: true
   ],
+  # The two docs stages are the one addition to this smaller gate, and the
+  # reason is what they protect: the published docs are part of the
+  # package, so the gate checks them the way HexDocs and hex.pm will read
+  # them before a publish. The Docs stage runs `mix docs` and fails on any
+  # ExDoc warning. The Doc links stage fails on the link rules ExDoc
+  # accepts silently: a README relative link to a file not in the package
+  # files, a published relative link to a file that is not an extra, two
+  # extras sharing a basename, and a silent rewrite to a different extra.
+  # `:auto` runs both whenever ex_doc is installed, which it is in dev.
+  docs: [enabled: :auto],
+  doc_links: [enabled: :auto],
   profiles: [
     loop: [
       stages: [:format, :compile, :credo, :test],
