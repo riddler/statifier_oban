@@ -426,7 +426,7 @@ as the Note, `sob-eh8`.
 
 ## Amendment (2026-09-24): an unresolvable handler may cancel and deliver, under `:unresolved_handler` `:cancel`
 
-Status: proposed (2026-09-24, sob-nnp)
+Status: accepted (2026-09-24, sob-nnp)
 
 Decision 6 above says:
 
@@ -506,3 +506,47 @@ The reopen trigger is a host that needs `:invalid_delivery`,
 `:invalid_codec` or `:codec_failed` to cancel rather than retry; neither
 decision 6 nor this Amendment settles that. The code this Amendment
 describes arrives in the same change as the Amendment, `sob-nnp`.
+
+## Note (2026-09-24): the `:unresolved_handler` Amendment accepted, its code tagged in 0.13.0
+
+The 2026-09-24 Amendment above is accepted by `sob-jb0`, on the
+operator's word, before the Hex publish: the code that implements it is
+`26fb90d` (`sob-nnp`), carried by the release 0.13.0, merged and tagged
+(`v0.13.0`, `04de8e7`) but not yet published on Hex when this Note was
+written. Every claim was read at `04de8e7`; no commit between `26fb90d`
+and that tag touches `lib/` or `test/`. The 2026-09-24 Note on the
+run-time bounds is a Note, carries no status, and is not part of this
+flip.
+
+- Decision 6's quoted text matches decision 6 in this record, and under
+  the default `:retry` an unresolvable handler still returns
+  `{:error, {:invalid_handler, name}}` and retries
+  (`unresolved_handler/5` in `lib/statifier_oban/invoke/worker.ex`).
+- The fifth class: under `:cancel` the attempt delivers
+  `[reason: "invalid_handler", attempts: attempt, detail: name]`, where
+  `attempt` is the job's current attempt and `name` the stored handler
+  string, emits `[:statifier_oban, :invoke, :failed]` with `handler`
+  `nil`, and returns `{:cancel, {:invalid_handler, name}}`
+  (`cancel_unresolved_handler/5`); `fail_undecodable/2` emits the same
+  event with `handler` `nil`.
+- The failure goes through the private `deliver_failure/5`, which calls
+  the seam's `deliver_failure/4` when exported and `deliver_failure/3`
+  otherwise, and the seam runs its execution-liveness check first
+  (`StatifierOban.Invoke.Delivery`'s moduledoc).
+- The delivery module resolves first under `:cancel`, and an
+  unresolvable one returns `{:error, {:invalid_delivery, _}}`
+  (`unresolved_handler/5`); the handler resolves before the delivery
+  module, so under the default a row with both unresolvable retries with
+  `:invalid_handler` (`resolve_and_execute/4`). `:invalid_codec` and
+  `:codec_failed` are not touched by this path.
+- The option is `:retry` or `:cancel`, defaulting to `:retry`, and any
+  other value is refused (`fetch_unresolved_handler/1` in
+  `lib/statifier_oban/config.ex`). The enqueue site writes it into the
+  job's meta (`lib/statifier_oban/invoke/handler.ex`, through
+  `StatifierOban.UnresolvedHandler.put/2`); `:retry` writes nothing and
+  only a stored `"cancel"` reads as `:cancel` (`cancel?/1` in
+  `lib/statifier_oban/unresolved_handler.ex`).
+- Consequences: the 0.13.0 CHANGELOG entry names `:unresolved_handler`
+  with `:retry` as the default, and no code path cancels on
+  `:invalid_delivery`, `:invalid_codec` or `:codec_failed`, so the
+  reopen trigger stands as written.
