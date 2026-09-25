@@ -10,6 +10,12 @@ fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/main
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.14.0] 2026-09-25
+
+### Added
+
+- An invoke handler's `run/1` or `run/2` may return `:deferred`: the job completes without delivering, the invocation stays open, and whoever finishes the work answers it later through the host's `StatifierOban.Invoke.Delivery` implementation (`deliver/3` or `deliver_failure/3`) by scope and invoke id.
+
 ## [0.13.0] 2026-09-24
 
 ### Added
