@@ -160,7 +160,7 @@ defmodule StatifierOban.Config do
   `:unresolved_handler` decides what an invoke job does when the handler
   module named on its row does not resolve - renamed, removed, or simply
   not yet deployed to this node. It takes `:retry` (the default) or
-  `:cancel`; any other value is rejected by `Config.new/1`.
+  `:cancel`; any other value is rejected by `new/1`.
 
   Under the default `:retry`, an unresolvable handler behaves exactly as
   it always has: the attempt fails with `{:error, {:invalid_handler,

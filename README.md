@@ -470,7 +470,7 @@ runs until its work returns. Three options set one per job kind, each in
 milliseconds or `:infinity`. A bound may be at most `4_294_967_295` ms, the
 largest timeout the BEAM accepts, and `:invoke_timeout` at most that less
 the invoke worker's 5-second margin (`4_294_962_295`); a larger value is
-rejected by `Config.new/1`:
+rejected by `StatifierOban.Config.new/1`:
 
 | Option | Default | What it bounds |
 |---|---|---|
