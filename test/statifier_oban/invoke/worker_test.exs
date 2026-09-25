@@ -165,6 +165,21 @@ defmodule StatifierOban.Invoke.WorkerTest do
       do: {:ok, %{"result" => "authorized", "scope" => scope, "invoke_id" => invoke.invoke_id}}
   end
 
+  # Deferred completion (ADR-0009): hands the work on and answers nothing.
+  defmodule DeferringHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{} = invoke, %{scope: scope}) do
+      send(:invoke_worker_test_listener, {:handed_off, scope, invoke.invoke_id})
+      :deferred
+    end
+  end
+
   # Both arities defined: the two-arity one is the more specific contract,
   # so it is the one the worker calls.
   defmodule BothAritiesHandler do
@@ -238,6 +253,24 @@ defmodule StatifierOban.Invoke.WorkerTest do
     assert %{success: 1, cancelled: 0, failure: 0} = drain()
 
     assert_received {:delivered_via_seam, _scope, "inv_botharities", %{"arity" => 2}}
+  end
+
+  # sabotage: the `:deferred` arm of `execute/5` answered the invocation
+  # with `:deferred` as its donedata - went red (a {:delivered_via_seam,
+  # ...} message arrived), reverted.
+  test "a deferred return completes the job without delivering through either door" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    insert!(args_for("sess_iw_deferred", "inv_deferred", DeferringHandler),
+      meta: %{"delivery" => Atom.to_string(RecordingDelivery)}
+    )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain()
+    assert [%Oban.Job{state: "completed"}] = jobs("sess_iw_deferred", "inv_deferred")
+
+    assert_received {:handed_off, "sess_iw_deferred", "inv_deferred"}
+    refute_received {:delivered_via_seam, _scope, _invoke_id, _donedata}
+    refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
   end
 
   # sabotage: `run/2`'s {:error, reason} arm returned {:ok, reason} - went

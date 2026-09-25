@@ -216,6 +216,30 @@ defmodule StatifierOban.Invoke.Handler do
   """
   @type fan_out :: {:fan_out, items :: list()} | {:fan_out, items :: list(), opts :: keyword()}
 
+  @typedoc """
+  The deferred return: the work was handed on, and the answer comes later
+  from somewhere else.
+
+  A handler whose work runs outside this job - enqueued on another Oban
+  instance in another release, say - returns `:deferred` once the
+  hand-off is made. The job completes **without delivering**, and the
+  invocation stays open. It is answered later by whoever finishes the
+  work, calling the host's own implementation of
+  `StatifierOban.Invoke.Delivery` - `c:StatifierOban.Invoke.Delivery.deliver/3`
+  for `done.invoke.<invoke_id>`, `c:StatifierOban.Invoke.Delivery.deliver_failure/3`
+  for `error.communication.invoke.<invoke_id>` - with the scope and the
+  invoke id this job ran under (`t:run_ctx/0` carries both). Those are
+  callbacks, not functions this package exports: the door is the host's
+  module, the same one the job's config names as `:invoke_delivery`.
+
+  While the answer is outstanding this package does nothing further: no
+  job waits, polls or times out on it. Leaving the invoking state cancels
+  the invocation through the ordinary cancel path, and a deadline is the
+  chart's own delayed send. The hand-off is at least once like the rest
+  of `run/1`, so key it on `invoke_id` (ADR-0009).
+  """
+  @type deferred :: :deferred
+
   @typedoc "Why a start or cancel could not be performed."
   @type perform_error ::
           {:missing_option, :invoke_queue}
@@ -242,9 +266,13 @@ defmodule StatifierOban.Invoke.Handler do
   `{:fan_out, items}` (or `{:fan_out, items, opts}`) is the third
   answer, and it is not an answer at all: it says this invocation is
   **N children rather than one result**. See `t:fan_out/0`.
+
+  `:deferred` is the fourth, and it is not an answer either: it says the
+  work was handed on and the answer comes later, through the host's
+  delivery module rather than from this job. See `t:deferred/0`.
   """
   @callback run(invoke :: Invoke.t()) ::
-              {:ok, donedata :: term()} | fan_out() | {:error, term()}
+              {:ok, donedata :: term()} | fan_out() | deferred() | {:error, term()}
 
   @doc """
   The same work, handed the job's `t:run_ctx/0` as well as the effect -
@@ -272,7 +300,7 @@ defmodule StatifierOban.Invoke.Handler do
       end
   """
   @callback run(invoke :: Invoke.t(), ctx :: run_ctx()) ::
-              {:ok, donedata :: term()} | fan_out() | {:error, term()}
+              {:ok, donedata :: term()} | fan_out() | deferred() | {:error, term()}
 
   @optional_callbacks run: 1, run: 2
 
