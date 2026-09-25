@@ -111,6 +111,25 @@ defmodule StatifierOban.Invoke.HandlerTest do
     def run(%Invoke{}), do: {:ok, %{"result" => "authorized"}}
   end
 
+  # The acceptance handler for deferred completion (ADR-0009): the work is
+  # handed on elsewhere - here, a message standing in for an insert into
+  # another release's queue - and the answer comes later, from outside
+  # the job. `drain/0` runs the job in the test process, so the hand-off
+  # lands in the test's own mailbox.
+  defmodule DeferringHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{} = invoke, %{scope: scope}) do
+      send(self(), {:handed_off, scope, invoke.invoke_id})
+      :deferred
+    end
+  end
+
   defmodule NoQueueHandler do
     @moduledoc false
     use StatifierOban.Invoke.Handler
@@ -262,6 +281,79 @@ defmodule StatifierOban.Invoke.HandlerTest do
     drain()
 
     assert [%Oban.Job{state: "discarded"}] = stored_jobs(scope, "inv_fail_e2e")
+
+    wait_until(fn ->
+      Statifier.Session.status(session).configuration == MapSet.new(["needs_attention"])
+    end)
+  end
+
+  # The deferred-completion pair (ADR-0009): the job completes without
+  # delivering, the invocation stays open, and the answer arrives
+  # afterwards from outside the job, through the host's delivery module -
+  # here the default, `StatifierOban.Invoke.Delivery.Session`, called
+  # directly as the finishing side would call it.
+  #
+  # sabotage: `Invoke.Worker.execute/5`'s `:deferred` arm answered the
+  # invocation with `:deferred` as its donedata - went red (the session
+  # was no longer in `calling` once the job ran, before the deferred
+  # answer was sent), reverted.
+  test "acceptance: a deferred job answered afterwards through deliver/3 steps the parent" do
+    {:ok, session} =
+      Statifier.Session.start_link(machine(),
+        invoke_handlers: %{@type_string => DeferringHandler}
+      )
+
+    scope = Statifier.Session.session_id(session)
+
+    wait_until(fn -> match?([_job], stored_jobs(scope, "inv_e2e")) end)
+
+    drain()
+
+    # The job is over and the work was handed on with the job's own
+    # identity pair, but nothing answered the invocation: the execution
+    # is still waiting in the invoking state.
+    assert [%Oban.Job{state: "completed"}] = stored_jobs(scope, "inv_e2e")
+    assert_received {:handed_off, ^scope, "inv_e2e"}
+    assert Statifier.Session.status(session).configuration == MapSet.new(["calling"])
+
+    # The finishing side answers later, by scope and invoke id.
+    assert :delivered =
+             StatifierOban.Invoke.Delivery.Session.deliver(scope, "inv_e2e", %{
+               "result" => "authorized"
+             })
+
+    wait_until(fn ->
+      Statifier.Session.status(session).configuration == MapSet.new(["finished"])
+    end)
+  end
+
+  # sabotage: `Invoke.Worker.run/5` mapped `:deferred` to
+  # `{:error, {:run_failed, :deferred}}` - went red (the job retried
+  # rather than completing, so the stored row was `retryable`), reverted.
+  test "acceptance: a deferred job answered afterwards through deliver_failure/3 delivers the failure" do
+    {:ok, machine} = Statifier.compile(@failure_chart)
+
+    {:ok, session} =
+      Statifier.Session.start_link(machine,
+        invoke_handlers: %{@failure_type => DeferringHandler}
+      )
+
+    scope = Statifier.Session.session_id(session)
+
+    wait_until(fn -> match?([_job], stored_jobs(scope, "inv_fail_e2e")) end)
+
+    drain()
+
+    assert [%Oban.Job{state: "completed"}] = stored_jobs(scope, "inv_fail_e2e")
+    assert_received {:handed_off, ^scope, "inv_fail_e2e"}
+    assert Statifier.Session.status(session).configuration == MapSet.new(["capturing"])
+
+    assert :delivered =
+             StatifierOban.Invoke.Delivery.Session.deliver_failure(scope, "inv_fail_e2e",
+               reason: "remote_failed",
+               attempts: 1,
+               detail: "the other release gave up"
+             )
 
     wait_until(fn ->
       Statifier.Session.status(session).configuration == MapSet.new(["needs_attention"])

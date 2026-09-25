@@ -62,6 +62,11 @@ defmodule StatifierOban.Invoke.Worker do
     `{:fan_out_refused, refusal}` and delivers
     `error.communication.invoke.<invoke_id>` on the way past; one that
     could not be scheduled right now retries;
+  - `run/1` returned `:deferred` -> the work was handed on elsewhere, so
+    the job completes **without delivering** and the invocation stays
+    open until whoever finishes the work answers it through the host's
+    `StatifierOban.Invoke.Delivery` implementation (ADR-0009). Nothing
+    in this package waits on that answer;
   - the execution is not live -> the job cancels with `{:discarded, reason}`
     recorded - a completed invoke against a dead or halted execution is
     discarded the same way a fired timer is;
@@ -243,6 +248,14 @@ defmodule StatifierOban.Invoke.Worker do
 
       {:ok, donedata} ->
         answer(job, delivery, scope, handler, invoke, donedata)
+
+      # The deferred arm (ADR-0009): the work was handed on, and the
+      # answer arrives later through the host's delivery module, called
+      # by whoever finishes it. Like the fan-out arm, the job completes
+      # without delivering and the invocation stays open; unlike it, no
+      # side of this package will ever answer it.
+      :deferred ->
+        :ok
 
       {:error, {:run_failed, reason}} = failed ->
         maybe_fail(job, delivery, scope, handler, invoke, "run_failed", inspect(reason))
@@ -478,12 +491,14 @@ defmodule StatifierOban.Invoke.Worker do
         ) ::
           {:ok, term()}
           | {:fan_out, term(), keyword()}
+          | :deferred
           | {:error, {:run_failed, term()}}
   defp run(job, delivery, scope, handler, invoke) do
     case call_bounded(JobTimeout.bound(job), handler, invoke, scope) do
       {:ok, donedata} -> {:ok, donedata}
       {:fan_out, items} -> {:fan_out, items, []}
       {:fan_out, items, opts} -> {:fan_out, items, opts}
+      :deferred -> :deferred
       {:error, reason} -> {:error, {:run_failed, reason}}
     end
   rescue
@@ -517,6 +532,7 @@ defmodule StatifierOban.Invoke.Worker do
           {:ok, term()}
           | {:fan_out, term()}
           | {:fan_out, term(), keyword()}
+          | :deferred
           | {:error, term()}
   defp call_run(handler, invoke, scope) do
     if function_exported?(handler, :run, 2) do
@@ -538,6 +554,7 @@ defmodule StatifierOban.Invoke.Worker do
           {:ok, term()}
           | {:fan_out, term()}
           | {:fan_out, term(), keyword()}
+          | :deferred
           | {:error, term()}
   defp call_bounded(:infinity, handler, invoke, scope), do: call_run(handler, invoke, scope)
 

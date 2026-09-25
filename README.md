@@ -463,6 +463,90 @@ them; `StatifierOban.Invoke.FanOut.cancel_unstarted/3` is the other door,
 for the indices whose start job has not run yet and which therefore have
 no execution record to cancel.
 
+### Enqueue elsewhere, answer later
+
+Sometimes the work an invocation stands for is not done by this job at all:
+another release owns it, on its own Oban instance and its own queue. The
+handler's job then only hands the work on, and returns `:deferred` instead of
+an answer:
+
+```elixir
+defmodule MyApp.ReportHandler do
+  use StatifierOban.Invoke.Handler
+
+  @impl StatifierOban.Invoke.Handler
+  def config, do: MyApp.statifier_oban_config()
+
+  # `run/2`, because the other release needs the scope to answer with.
+  # The insert is unique on the invoke id, so a re-run of this job hands
+  # the work on once, not twice.
+  @impl StatifierOban.Invoke.Handler
+  def run(invoke, %{scope: scope, invoke_id: invoke_id}) do
+    %{scope: scope, invoke_id: invoke_id, params: invoke.params}
+    |> MyApp.Reports.BuildWorker.new(unique: [keys: [:scope, :invoke_id], period: :infinity])
+    |> then(&Oban.insert(MyApp.ReportsOban, &1))
+    |> case do
+      {:ok, _job} -> :deferred
+      {:error, reason} -> {:error, reason}
+    end
+  end
+end
+```
+
+`:deferred` completes this job **without delivering**: the invocation stays
+open, and the chart stays in its invoking state. Whoever finishes the work
+answers it later, with the same scope and invoke id, through the host's own
+`StatifierOban.Invoke.Delivery` implementation - the module the config names
+as `:invoke_delivery`:
+
+```elixir
+# In the other release, when the report is built:
+:delivered = MyApp.InvokeDelivery.deliver(scope, invoke_id, %{"report_id" => report.id})
+
+# ...or when it gives up for good:
+:delivered =
+  MyApp.InvokeDelivery.deliver_failure(scope, invoke_id,
+    reason: "report_failed",
+    attempts: attempt,
+    detail: "the source table was empty"
+  )
+```
+
+`deliver/3` and `deliver_failure/3` are callbacks of that behaviour, not
+functions this package exports, so the call goes to the host's module, and
+it behaves exactly as it does when the worker makes it: the liveness check
+first, `:delivered` or `{:discarded, reason}` back. The answer becomes
+`done.invoke.<invoke_id>` or `error.communication.invoke.<invoke_id>`; the
+`reason`, `attempts` and `detail` of a failure are the finishing side's own.
+The caller needs whatever the implementation needs to reach the execution:
+for a host that keeps executions in storage, access to that store; for the
+default `StatifierOban.Invoke.Delivery.Session`, a node where the session is
+registered.
+
+While the answer is outstanding, this package does nothing: nothing waits,
+polls, or times out on it. Two things a chart may want are already there:
+
+```xml
+<state id="reporting">
+  <onentry>
+    <send id="report_deadline" event="report.too_slow" delay="2h"/>
+  </onentry>
+  <onexit>
+    <cancel sendid="report_deadline"/>
+  </onexit>
+  <invoke id="report" type="myapp:report"/>
+  <transition event="done.invoke.report" target="reported"/>
+  <transition event="error.communication.invoke.report" target="needs_attention"/>
+  <transition event="report.too_slow" target="needs_attention"/>
+</state>
+```
+
+- **A deadline** is the chart's own delayed send, as above.
+- **Cancelling** is the ordinary path: leaving `reporting` cancels the
+  invocation, and a late answer for it is dropped - the default delivery
+  treats it as a no-op. Telling the other release to stop is the host's to
+  arrange. ADR-0009 records the whole shape.
+
 ## Bounding a job's run time
 
 By default no job this package enqueues has a run-time bound: an attempt
