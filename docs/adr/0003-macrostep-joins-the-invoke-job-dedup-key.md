@@ -113,7 +113,7 @@ this key can migrate by a superseding ADR.
 
 ## Note (2026-09-12): the dedup key is untouched by the execution rename
 
-`statifier_persistence` ADR-0011 (proposed, campaign SF041) renames the
+`statifier_persistence` ADR-0011 (proposed) renames the
 family's durable record from a "run" to an **execution**. This package's prose
 follows in `sob-mh3`; this record's Decision does not move, and neither does a
 single stored byte.
@@ -139,4 +139,4 @@ a quotation of the *host's own* packed scope as it stood when this record was
 taken, not this package's vocabulary, and a quotation is not renamed.
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
-no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+no line of it is cited here. Recorded by `sob-mh3`.

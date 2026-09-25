@@ -82,8 +82,7 @@ forbidden however the consent arrives. A version bump is the recorded
 exception: on a release bead the operator has named (in the campaign plan or
 their own words), the bump commit is release prep, not a release - the
 mechanism `.claude/wurk/commit.md` records. (Recorded 2026-08-27 by the
-operator, campaign 008; the row above aligned 2026-09-01, campaign 025
-post-wrap queue walk.)
+operator; the row above aligned by the operator 2026-09-01.)
 
 Merging a campaign PR is a recorded exception: under a campaign consent the
 operator has adopted verbatim that names automatic merges, with every

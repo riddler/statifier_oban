@@ -1,6 +1,6 @@
 # ADR-0006: Telemetry events for the durable seams
 
-Status: accepted (2026-09-01, sob-43q; unqualified direction-agent verdict, campaign-025) - amended 2026-09-06 (sob-28m, PR 72: the fan-out seam mints three events, count eleven to fourteen)
+Status: accepted (2026-09-01, sob-43q; unqualified direction-agent verdict) - amended 2026-09-06 (sob-28m, PR 72: the fan-out seam mints three events, count eleven to fourteen)
 
 ## Context
 
@@ -395,7 +395,7 @@ same change, in the shape ADR-0005's head line already carries.
 
 ## Note (2026-09-12): the execution rename reaches the prose, not one event name or key
 
-`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+`statifier_persistence` ADR-0011 (proposed) names the durable
 record a chart's progress is persisted against an **execution**. This package's
 documentation moved to that word in `sob-mh3`. This record's event set did not
 move, and this Note exists mainly to say so.
@@ -416,7 +416,7 @@ the delivery-seam docs say an event is fed back into a live execution, and
 `docs/telemetry.md`'s cardinality section says a `scope` is one per execution.
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
-no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+no line of it is cited here. Recorded by `sob-mh3`.
 
 ## Note (2026-09-13): `telemetry.ex` moved after the cite above was read
 
@@ -442,4 +442,4 @@ key, therefore holds at `2ffc3b7` and at `e3422bb` alike.
 The premise surface is `lib/statifier_oban/telemetry.ex` at `e3422bb`. The
 count of fourteen is fixed by `events/0`'s single definition site and is held
 by this package's suite rather than by any list written here. Recorded by
-`sob-v9s` (campaign SF044).
+`sob-v9s`.
