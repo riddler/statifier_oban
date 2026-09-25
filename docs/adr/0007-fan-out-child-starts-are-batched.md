@@ -1,10 +1,10 @@
 # ADR-0007: Fan-out child starts are batched, and the concurrency bound is the runtime's
 
-Status: accepted (2026-09-01, sob-djz; unqualified direction-agent verdict on the first review, campaign-026)
+Status: accepted (2026-09-01, sob-djz; unqualified direction-agent verdict on the first review)
 
 ## Context
 
-`statifier_blocks`' ADR-0009 (accepted 2026-09-01, campaign-026) adds a
+`statifier_blocks`' ADR-0009 (accepted 2026-09-01) adds a
 durable fan-out block type, `core.map`: one invocation whose handler starts
 N children, one per item, with the answers accumulated into one datamodel
 location in item-index order. That record fixes what an author writes and
@@ -31,7 +31,7 @@ batched and bounded.
 
 Three things constrain the answer before any preference does.
 
-**The operator's `R26-6` fixes the shape.** The concurrency bound is
+**The operator's ruling of 2026-09-01 fixes the shape.** The concurrency bound is
 runtime-owned with a block-level hint the runtime clamps - a deployment
 property, host-wins logic - and this package **batches child starts rather
 than firing N at once**. `sb-ADR-0009` decision 9 states the hint half; the
@@ -86,7 +86,7 @@ async work gives it its own queue, which is a deployment change and not a
 document change, which is the whole point of decision 9 upstream.
 
 **2. A batch is a scheduling unit, not a transaction.** This answers the
-first half of `sb-ADR-0009` decision 8's question, and `R26-6` answers it
+first half of `sb-ADR-0009` decision 8's question, and that ruling answers it
 before preference does: if starts are batched rather than fired at once, then
 between slice k and slice k+1 there exists a durable, observable state in
 which some children of an invocation have started and others have not. A
@@ -217,12 +217,12 @@ which is a silent fan-out of one.
 this package does not control.** A host that pauses the fan-out queue pauses
 every live fan-out, and a host that scales it changes the bound under
 in-flight work. Both are correct - the bound is the deployment's, which is
-`R26-6` - and both mean the effective concurrency of a run is not a property
+that ruling - and both mean the effective concurrency of a run is not a property
 of the document that produced it. An author who reads `max_concurrency: 4`
 and expects four for the run's whole life will be wrong on a rescaled queue.
 
-**Nothing here is implemented.** Campaign 026's `R26-1` defers the
-implementation; this record carries no `lib/` change and no test. It depends
+**Nothing here is implemented.** The operator's ruling of 2026-09-01 defers
+the implementation; this record carries no `lib/` change and no test. It depends
 on `sp-3n2`, which is filed and unlanded - decisions 4, 5 and 7 name the
 ordered set and the per-child index as though they exist, and they do not
 yet.
@@ -254,7 +254,7 @@ code the *first* child to finish would complete the whole map block, and a
 non-final child completion has no parent step to ride. So there is no door
 at which slice k+1 could go out. Building one means a re-dispatch of the
 invocation on every settlement, which is the parent-driven refill the scale
-walk (`R31-11`) declined to pull forward.
+walk declined to pull forward.
 
 **The bound the record actually wanted is already enforced without
 slicing.** Decision 1's first bullet is the whole mechanism: jobs sit
@@ -293,7 +293,7 @@ scheduling duty at all. The idempotency argument it ended on is retained
 elsewhere - a completion delivered twice cannot start a child twice, because
 decision 4's key makes the second enqueue a conflict.
 
-Recorded from the operator's `R31-11` (campaign 031, 2026-09-05), taken
+Recorded from the operator's ruling of 2026-09-05, taken
 from the fan-out scale walk, and implemented by `sob-q3y` in
 `StatifierOban.Invoke.FanOut`.
 
@@ -301,8 +301,8 @@ from the fan-out scale walk, and implemented by `sob-q3y` in
 
 Decision 8 declined to pick a number for the cap and left it to a host
 that measures one. Two things the record left open are settled here by the
-operator's ruling `R31-9` (campaign 031, 2026-09-05), taken from the same
-fan-out scale walk as Note 1's `R31-11`, because the implementation cannot
+operator's ruling of 2026-09-05, taken from the same
+fan-out scale walk as Note 1's ruling, because the implementation cannot
 proceed without them.
 
 **The cap is a `StatifierOban.Config` key, `:max_fan_out`, defaulting to
@@ -327,7 +327,7 @@ takes the parent run id, the effect, the index and the count. A host
 running `statifier_persistence` wires the start-with-index function that
 package ships for this; a host with its own run store wires its own.
 
-Recorded from the operator's `R31-9` (campaign 031, 2026-09-05), taken from
+Recorded from the operator's ruling of 2026-09-05, taken from
 the fan-out scale walk, and implemented by `sob-q3y` in
 `StatifierOban.Config` and `StatifierOban.Invoke.FanOut`.
 
@@ -353,12 +353,12 @@ the indices whose start job has not run, so its count is half of a
 `first_error` cancel and the settlement side's walk over the created child runs
 is the other half.
 
-Recorded from the operator's `RQ-034-12` (campaign 034, 2026-09-06) and
+Recorded from the operator's ruling of 2026-09-06 and
 implemented by `sob-28m`.
 
 ## Note (2026-09-12): the ChildStarter seam's first argument is `parent_execution_id`
 
-`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the
+`statifier_persistence` ADR-0011 (proposed) names the
 durable record a chart's progress is persisted against an **execution**. The
 seam the Note of 2026-09-05 added - `:child_starter`, whose callback this
 package calls once per index - names that record in its first argument, so
@@ -387,4 +387,4 @@ than a transaction, and the `sb-ADR-0009` decision 6 asymmetry the 2026-09-06
 Note names, are unchanged.
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
-no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+no line of it is cited here. Recorded by `sob-mh3`.

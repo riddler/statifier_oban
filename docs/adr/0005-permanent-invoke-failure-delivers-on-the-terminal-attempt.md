@@ -130,7 +130,7 @@ is a host that needs to revive discarded invoke jobs that way.
 
 ## Amendment (2026-08-29): the undecodable-payload arm delivers through the door
 
-Status: accepted (2026-08-29, unqualified direction-agent verdict under the operator campaign-015 grant, sob-aty, PR 40)
+Status: accepted (2026-08-29, unqualified direction-agent verdict under the operator's grant, sob-aty, PR 40)
 
 Decision 6 above says:
 
@@ -258,8 +258,7 @@ an empty `core.map` ought instead to answer with an empty result is a question
 for the record that owns what the block does with its answers, and is filed
 there rather than settled here.
 
-Recorded from the operator's ruling `RQ-031-1` option (a) (campaign 031,
-2026-09-05), and implemented by `sob-q3y` in `StatifierOban.Invoke.Worker`.
+Recorded from the operator's ruling of 2026-09-05, and implemented by `sob-q3y` in `StatifierOban.Invoke.Worker`.
 
 ## Note (2026-09-06): the empty fan-out is answered, not refused
 
@@ -272,7 +271,7 @@ list resolving to `[]` is **a successful fan-out over nothing**: zero children
 start, the accumulated list is written as `[]`, and the block takes `done`
 immediately. `sb-ADR-0011` recorded the disagreement between that record and
 this package's shipped refusal as a deferred question, and the operator ruled
-it on 2026-09-06 (campaign 033, `sob-as0` / `sb-xwhj`): the record wins and
+it on 2026-09-06 (`sob-as0` / `sb-xwhj`): the record wins and
 the handler changes.
 
 **`:empty_items` is gone from `:detail`.** Of the three reasons this Note's
@@ -301,13 +300,13 @@ which happened to be empty this time failing on
 `error.communication.invoke.<invoke_id>`, which is the outcome
 `sb-ADR-0009` decision 8 exists to rule out.
 
-Recorded from the operator's ruling on `sob-as0` (campaign 033, 2026-09-06),
+Recorded from the operator's ruling on `sob-as0` (2026-09-06),
 and implemented by `sob-as0` in `StatifierOban.Invoke.FanOut` and
 `StatifierOban.Invoke.Worker`.
 
 ## Note (2026-09-12): the failure lands on an execution
 
-`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+`statifier_persistence` ADR-0011 (proposed) names the durable
 record a chart's progress is persisted against an **execution**. This package's
 prose moved to that word in `sob-mh3`; this record's Decision, its 2026-08-29
 Amendment and both later Notes stand as written.
@@ -330,7 +329,7 @@ and `c:StatifierOban.Invoke.Delivery.deliver_failure/3` keeps its shape
 `invoke_failed/7`, read at `2ffc3b7`).
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
-no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+no line of it is cited here. Recorded by `sob-mh3`.
 
 ## Note (2026-09-13): `telemetry.ex` moved after the cite above was read
 
@@ -361,7 +360,7 @@ The same Note's other two cites,
 
 The premise surface is `lib/statifier_oban/telemetry.ex` at `e3422bb`; the
 event set itself is fixed by ADR-0006 and enumerated by that record's suite,
-not here. Recorded by `sob-v9s` (campaign SF044).
+not here. Recorded by `sob-v9s`.
 
 ## Note (2026-09-24): a timed-out attempt fails inside the worker, and its terminal attempt delivers `"run_crashed"`
 

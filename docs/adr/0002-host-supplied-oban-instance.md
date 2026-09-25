@@ -95,7 +95,7 @@ suite as well as inside it.
 
 ## Note (2026-09-12): the durable record this record calls a "run" is an execution
 
-`statifier_persistence` ADR-0011 (proposed, campaign SF041) names the durable
+`statifier_persistence` ADR-0011 (proposed) names the durable
 record a chart's progress is persisted against an **execution**, retiring
 "run" as the family's word for it. This package's prose moved to that word in
 `sob-mh3`. This record did not: nothing above moves, and nothing observable
@@ -117,7 +117,7 @@ read at `2ffc3b7`); the delivery seam this Note's harness implements is
 are untouched (`lib/statifier_oban/timer/delivery.ex`, read at `2ffc3b7`).
 
 `ADR-0011` is proposed and is not yet on `statifier_persistence`'s `main`, so
-no line of it is cited here. Recorded by `sob-mh3` (campaign SF041).
+no line of it is cited here. Recorded by `sob-mh3`.
 
 ## Note (2026-09-23): a host's transaction around an insert, and Oban's retry
 
