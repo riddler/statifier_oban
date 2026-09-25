@@ -147,7 +147,8 @@ defmodule StatifierOban.ConfigTest do
              Config.new(oban: MyHost.Oban, timers_queue: :t, child_starter: true)
   end
 
-  # The default is ADR-0007 decision 8's cap, given a number by R31-9.
+  # The default is ADR-0007 decision 8's cap, given a number (1,000) by the
+  # operator, 2026-09-05.
   #
   # sabotage: `@default_max_fan_out` was changed to 10 - went red here and
   # on the moduledoc's default, reverted.

@@ -260,7 +260,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
     assert second.conflict?
   end
 
-  # -- the cap (ADR-0007 decision 8, R31-9) --------------------------------
+  # -- the cap (ADR-0007 decision 8, ruled 2026-09-05) ---------------------
 
   # sabotage: `counted/2` compared `count >= cap` - went red (a fan-out
   # of exactly the cap was refused too), reverted.
@@ -347,7 +347,8 @@ defmodule StatifierOban.Invoke.FanOutTest do
     refute_received {:started, _parent, "inv_empty", _index, _count, _opts}
   end
 
-  # -- max_concurrency: clamped, never honoured below the queue (R31-11) ---
+  # -- max_concurrency: clamped, never honoured below the queue (ruled
+  # 2026-09-05) -----------------------------------------------------------
 
   # ADR-0007's dated Note: all N start jobs are enqueued up front and the
   # queue's concurrency limit is the only bound, so a hint ABOVE that
@@ -406,7 +407,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
     assert [] == start_jobs("sess_fo_nostarter", "inv_nostarter")
   end
 
-  # -- cancelling the unstarted (sb-ADR-0009 decision 6, R31-12) -----------
+  # -- cancelling the unstarted (sb-ADR-0009 decision 6, ruled 2026-09-05) -
 
   # Both halves of the match are load-bearing: the state filter keeps an
   # invocation whose starts already ran out of the sweep, and the
@@ -486,7 +487,7 @@ defmodule StatifierOban.Invoke.FanOutTest do
     end
   end
 
-  # -- the aggregation policy reaches the seam (RQ-031-4, sob-64p) --------
+  # -- the aggregation policy reaches the seam (ruled 2026-09-05, sob-64p) -
 
   # An invocation that says nothing about failure is `:all`, and that is
   # what every one of its children is started with.

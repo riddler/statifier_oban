@@ -140,7 +140,7 @@ defmodule StatifierOban.Invoke.ChildStartWorkerTest do
     assert %{success: 0, failure: 0, cancelled: 1} = drain()
   end
 
-  # -- the seam's option list (RQ-031-4, sob-64p) --------------------------
+  # -- the seam's option list (ruled 2026-09-05, sob-64p) -------------------
 
   # The row's stored policy, not a default, is what the seam is handed.
   #
