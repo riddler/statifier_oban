@@ -118,7 +118,7 @@ defmodule StatifierOban.Telemetry do
   either the decode that would have named the module is the thing that
   failed, or the resolution itself is.
 
-  Where the seam delivers nothing, this emits nothing: under the default
+  A failure outside the invocation emits nothing here: under the default
   `StatifierOban.Config` `:unresolved_handler` `:retry`, the environment
   errors `:invalid_handler`, `:invalid_delivery`, `:invalid_codec` and
   `:codec_failed` say the deploy is wrong rather than anything about the
