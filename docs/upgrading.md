@@ -1,7 +1,7 @@
-# Upgrading a host from 0.11 to 0.13
+# Upgrading a host from 0.11 to 0.14
 
 This page says what a host changes to move `statifier_oban` from 0.11.0 to
-0.12.0, and from 0.12.0 to 0.13.0. A host
+0.12.0, from 0.12.0 to 0.13.0, and from 0.13.0 to 0.14.0. A host
 here is the code that embeds the package: the `StatifierOban.Config` it
 builds, the Oban instance and queues it runs the jobs on, its invoke
 handlers, any `StatifierOban.Timer.Delivery` or
@@ -11,7 +11,7 @@ handlers it attaches. What each release added is in
 about it, and says **NONE** where the answer is nothing.
 
 Move the pin with each minor, as the README recommends:
-`{:statifier_oban, "~> 0.13.0"}`. The `statifier` requirement (`~> 2.5`)
+`{:statifier_oban, "~> 0.14.0"}`. The `statifier` requirement (`~> 2.5`)
 and the `oban` requirement (`~> 2.19`) are the same on every step of this
 page. No step here adds a migration: the jobs are Oban's rows, in Oban's
 table.
@@ -125,6 +125,41 @@ May start doing:
 
 The README's "Parking a job whose handler is missing" section and the
 `StatifierOban.Config` documentation carry the detail.
+
+## 0.13 to 0.14
+
+0.14.0 adds one return to an invoke handler's `run/1` and `run/2`.
+Must change: **NONE**. The returns a handler already gives mean what they
+meant in 0.13.0, and nothing in `StatifierOban.Config`, the job rows, the
+delivery behaviours or the telemetry events changes.
+
+May start doing:
+
+- **Return `:deferred` from a handler whose work runs somewhere else.** A
+  handler that hands its work on - enqueued on another release's own Oban
+  instance and queue, say - returns `:deferred` once the hand-off is made.
+  The job completes without delivering, the invocation stays open, and the
+  chart stays in its invoking state. Whoever finishes the work answers it
+  later, by scope and invoke id, through the host's own
+  `StatifierOban.Invoke.Delivery` implementation, the module the config
+  names as `:invoke_delivery`: `deliver/3` for `done.invoke.<invoke_id>`,
+  `deliver_failure/3` for `error.communication.invoke.<invoke_id>`.
+  Implement `run/2` rather than `run/1` for this: its context carries the
+  scope the answer needs.
+- **Key the hand-off on the invoke id.** A handler's run is at least once,
+  so a re-run of the job must not hand the work on twice; the README's
+  example inserts the other release's job unique on the scope and the
+  invoke id. Under a finite `:invoke_timeout` the bound covers the hand-off
+  only, not the work handed on.
+- **Give the chart its own deadline if the answer may never come.** While
+  the answer is outstanding this package does nothing: no job waits, polls
+  or times out on it. A deadline is the chart's own delayed send. Leaving
+  the invoking state cancels the invocation through the ordinary cancel
+  path, and a late answer for it is then dropped; telling the other
+  release to stop is the host's to arrange.
+
+The README's "Enqueue elsewhere, answer later" section and
+[ADR-0009](adr/0009-deferred-completion.md) carry the detail.
 
 ## Timers days out
 
