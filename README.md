@@ -501,15 +501,22 @@ as `:invoke_delivery`:
 
 ```elixir
 # In the other release, when the report is built:
-:delivered = MyApp.InvokeDelivery.deliver(scope, invoke_id, %{"report_id" => report.id})
+case MyApp.InvokeDelivery.deliver(scope, invoke_id, %{"report_id" => report.id}) do
+  :delivered -> :ok
+  # The execution ended or halted first: the answer was dropped, and
+  # there is no one left to tell.
+  {:discarded, _reason} -> :ok
+end
 
 # ...or when it gives up for good:
-:delivered =
-  MyApp.InvokeDelivery.deliver_failure(scope, invoke_id,
-    reason: "report_failed",
-    attempts: attempt,
-    detail: "the source table was empty"
-  )
+case MyApp.InvokeDelivery.deliver_failure(scope, invoke_id,
+       reason: "report_failed",
+       attempts: attempt,
+       detail: "the source table was empty"
+     ) do
+  :delivered -> :ok
+  {:discarded, _reason} -> :ok
+end
 ```
 
 `deliver/3` and `deliver_failure/3` are callbacks of that behaviour, not
@@ -543,9 +550,13 @@ polls, or times out on it. Two things a chart may want are already there:
 
 - **A deadline** is the chart's own delayed send, as above.
 - **Cancelling** is the ordinary path: leaving `reporting` cancels the
-  invocation, and a late answer for it is dropped - the default delivery
-  treats it as a no-op. Telling the other release to stop is the host's to
-  arrange. ADR-0009 records the whole shape.
+  invocation, and a late answer for it is dropped. The no-op is the
+  session's, not the delivery's: while the execution is still running, the
+  default delivery's liveness check passes and it returns `:delivered`, and
+  `Statifier.Session.done_invocation/3` (or `failed_invocation/3`) then
+  discards the answer for an invocation already cancelled. Telling the
+  other release to stop is the host's to arrange. ADR-0009 records the
+  whole shape.
 
 ## Bounding a job's run time
 
