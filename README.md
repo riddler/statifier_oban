@@ -48,12 +48,17 @@ StatifierOban.Invoke.Handler` is the Oban-backed invoke handler base on
 statifier's handler registry. Both enqueue sites run the host-opaque job-arg
 fields through the optional `:opaque_codec` seam described below.
 
-One thing is deliberately unfinished: what a *permanently* failed invocation
-should look like inside the chart. A `run/1` that keeps failing exhausts its
-Oban retries and is discarded, observable on the job row and nowhere else. The
-event vocabulary is statifier-ex's to decide, so the semantics are being
-finalized upstream and this package documents the gap rather than inventing an
-event for it. See `StatifierOban.Invoke.Handler`'s moduledoc.
+A *permanently* failed invocation reaches the chart. A `run/1` that keeps
+failing - returning `{:error, reason}`, raising, or exiting - is retried while
+Oban attempts remain, and the terminal attempt delivers
+`error.communication.invoke.<invoke_id>` into the execution, behind the same
+execution-liveness check a completion goes through. A chart that parks failed
+work transitions on that event, or on the bare `error.communication` it
+extends, instead of hanging in the invoking state. The event and its payload
+are statifier-ex's; the failure classes in its `"reason"` are this package's.
+ADR-0005 ("Permanent invoke failure delivers on the terminal attempt") records
+the decision, and `StatifierOban.Invoke.Handler`'s moduledoc shows the chart
+side.
 
 Beyond this package's own suite, the shape is exercised downstream:
 [statifier_examples](https://github.com/riddler/statifier_examples), a public
