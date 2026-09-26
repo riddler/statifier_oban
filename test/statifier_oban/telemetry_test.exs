@@ -46,6 +46,18 @@ defmodule StatifierOban.TelemetryTest do
     def run(%Invoke{}), do: {:error, :gateway_down}
   end
 
+  # Deferred completion (ADR-0009): hands the work on and answers nothing.
+  defmodule DeferringHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}, %{scope: _scope}), do: :deferred
+  end
+
   defmodule NoQueueHandler do
     @moduledoc false
     use StatifierOban.Invoke.Handler
@@ -96,7 +108,7 @@ defmodule StatifierOban.TelemetryTest do
   # (13 names, the invoke discard name missing) and, as a side effect, on
   # the invoke :discarded test, whose event stopped being attachable at
   # all; reverted.
-  test "events/0 enumerates all fourteen names" do
+  test "events/0 enumerates all fifteen names" do
     assert Telemetry.events() == [
              [:statifier_oban, :timer, :scheduled],
              [:statifier_oban, :timer, :schedule_rejected],
@@ -111,10 +123,11 @@ defmodule StatifierOban.TelemetryTest do
              [:statifier_oban, :invoke, :unstarted_cancelled],
              [:statifier_oban, :invoke, :delivered],
              [:statifier_oban, :invoke, :discarded],
-             [:statifier_oban, :invoke, :failed]
+             [:statifier_oban, :invoke, :failed],
+             [:statifier_oban, :invoke, :deferred]
            ]
 
-    assert length(Telemetry.events()) == 14
+    assert length(Telemetry.events()) == 15
   end
 
   # -- timer scheduling seam ----------------------------------------------
@@ -451,6 +464,38 @@ defmodule StatifierOban.TelemetryTest do
              reason: :terminated,
              job_id: job.id
            }
+  end
+
+  # sabotage: the `:deferred` arm of `execute/5` dropped its emission -
+  # went red (no :deferred event arrived); and `invoke_deferred/5` put
+  # `nil` where the row's delivery module belongs - went red on the
+  # metadata comparison; both reverted.
+  test "a deferred invocation emits :deferred and neither answer event",
+       %{queue: queue, scope: scope} do
+    job =
+      insert_invoke!(queue, scope, "inv_tel_deferred", DeferringHandler,
+        meta: %{"delivery" => Atom.to_string(RecordingInvokeDelivery)}
+      )
+
+    assert %{success: 1, cancelled: 0, failure: 0} = drain(queue)
+
+    assert_received {:event, [:statifier_oban, :invoke, :deferred], measurements, metadata}
+
+    assert %{system_time: system_time, attempt: 1} = measurements
+    assert is_integer(system_time)
+
+    assert metadata == %{
+             scope: scope,
+             invoke_id: "inv_tel_deferred",
+             macrostep: 1,
+             handler: DeferringHandler,
+             delivery: RecordingInvokeDelivery,
+             job_id: job.id
+           }
+
+    refute_received {:event, [:statifier_oban, :invoke, :delivered], _m, _md}
+    refute_received {:event, [:statifier_oban, :invoke, :discarded], _m, _md}
+    refute_received {:event, [:statifier_oban, :invoke, :failed], _m, _md}
   end
 
   # sabotage: `maybe_fail/7` emitted a hardcoded `"run_crashed"` class

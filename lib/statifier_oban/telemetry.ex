@@ -91,6 +91,18 @@ defmodule StatifierOban.Telemetry do
   | `[:statifier_oban, :invoke, :delivered]` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
   | `[:statifier_oban, :invoke, :discarded]` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `reason`, `job_id` |
   | `[:statifier_oban, :invoke, :failed]` | `system_time`, `attempts` | `scope`, `invoke_id`, `reason`, `detail`, `handler`, `job_id` |
+  | `[:statifier_oban, :invoke, :deferred]` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
+
+  `[:statifier_oban, :invoke, :deferred]` is the one delivery-seam event
+  that is not a verdict: `run/1` or `run/2` answered `:deferred`
+  (ADR-0009), the job completes without delivering, and the invocation
+  stays open until whoever finishes the work answers it through the
+  host's `StatifierOban.Invoke.Delivery` implementation. It carries
+  `:delivered`'s keys, `delivery` being the module named on the row -
+  the door the job would have answered through - and `attempt` the
+  deferring attempt's own. The eventual answer is never seen here, so
+  no event follows it: a deferred invocation's telemetry from this
+  package ends at this event.
 
   `reason` on the two `:discarded` events is the delivery seam's
   `t:StatifierOban.Timer.Delivery.discard_reason/0` - the spec 6.2 verdict
@@ -177,12 +189,13 @@ defmodule StatifierOban.Telemetry do
     :unstarted_cancelled,
     :delivered,
     :discarded,
-    :failed
+    :failed,
+    :deferred
   ]
 
   @doc """
   Every event name this module can ever emit - the 5
-  `[:statifier_oban, :timer, kind]` names and the 9
+  `[:statifier_oban, :timer, kind]` names and the 10
   `[:statifier_oban, :invoke, kind]` names, built from `@timer_kinds` and
   `@invoke_kinds`, this module's single definition site for the
   vocabulary.
@@ -473,6 +486,29 @@ defmodule StatifierOban.Telemetry do
         handler: handler,
         delivery: delivery,
         reason: reason,
+        job_id: job.id
+      }
+    )
+  end
+
+  @doc """
+  Emits `[:statifier_oban, :invoke, :deferred]` - `run/1` (or `run/2`)
+  answered `:deferred` (ADR-0009): the work was handed on, the job
+  completes without delivering, and the invocation stays open for
+  whoever finishes the work to answer through the host's delivery
+  module. Not an answer, and no event from this package follows it.
+  """
+  @spec invoke_deferred(scope(), module(), Invoke.t(), module(), Oban.Job.t()) :: :ok
+  def invoke_deferred(scope, handler, %Invoke{} = invoke, delivery, %Oban.Job{} = job) do
+    :telemetry.execute(
+      [:statifier_oban, :invoke, :deferred],
+      %{system_time: System.system_time(), attempt: job.attempt},
+      %{
+        scope: scope,
+        invoke_id: invoke.invoke_id,
+        macrostep: invoke.macrostep,
+        handler: handler,
+        delivery: delivery,
         job_id: job.id
       }
     )

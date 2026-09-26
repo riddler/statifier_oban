@@ -253,8 +253,11 @@ defmodule StatifierOban.Invoke.Worker do
       # answer arrives later through the host's delivery module, called
       # by whoever finishes it. Like the fan-out arm, the job completes
       # without delivering and the invocation stays open; unlike it, no
-      # side of this package will ever answer it.
+      # side of this package will ever answer it. The hand-off itself is
+      # this job's last fact about the invocation, so it is the one
+      # event emitted here (ADR-0006's 2026-09-26 amendment).
       :deferred ->
+        Telemetry.invoke_deferred(scope, handler, invoke, delivery, job)
         :ok
 
       {:error, {:run_failed, reason}} = failed ->

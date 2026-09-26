@@ -146,3 +146,20 @@ land as a dated Note or Amendment on this record: sob-v6x, on decision
 4's narration of a call chain and decision 2's naming of a private
 function, and sob-9xp, on whether a deferral gets an invoke telemetry
 event of its own, which the Consequences say it does not today.
+
+## Note (2026-09-26): a deferral now emits `[:statifier_oban, :invoke, :deferred]`
+
+The Consequences above say the package "emits no invoke telemetry event of its
+own for a deferral". That sentence is changed by ADR-0006's 2026-09-26
+amendment (proposed, sob-9xp), which adds the event
+`[:statifier_oban, :invoke, :deferred]`: the `:deferred` arm of
+`StatifierOban.Invoke.Worker`'s private `execute/5` emits it, through
+`StatifierOban.Telemetry.invoke_deferred/5`, when `run/1` or `run/2` answers
+`:deferred`, and still answers `:ok` without calling either door. Its
+measurements and metadata are stated in that amendment's table.
+
+The rest of that bullet stands: the eventual answer is invisible to this
+package, and `[:statifier_oban, :invoke, :delivered | :discarded | :failed]`
+still do not fire for a deferral. No decision of this record moves; decision 2's
+outcome, a job that completes without delivering, is unchanged. The event ships
+in a minor release, because it grows the closed set `events/0` returns.
