@@ -58,6 +58,41 @@ defmodule StatifierOban.Timer.Delivery do
   package are at-least-once, so `c:deliver/2` can run more than once for
   the same fired timer.
 
+  ## A parked execution retries; it is never discarded
+
+  An execution parked by a chart migration - `statifier_persistence`'s
+  `:needs_migration` status, which its `step/5` answers with
+  `{:error, {:needs_migration, execution}}` - is neither live nor
+  finished. It takes no event while it is parked, and it takes events
+  again once the host unparks it or a corrected migration moves it on.
+  So the contract's second sentence does not reach it: it is not a
+  finished execution, and a timer firing into it is **retried, never
+  discarded**.
+
+  The retry is a raise out of `c:deliver/2`. The callback answers
+  `:delivered` or `{:discarded, reason}` and nothing else, so a raise is
+  the one retry the seam admits; an Oban snooze is not available from
+  inside it. The job goes `retryable` under Oban's backoff, still counts
+  as a pending timer for the execution's scope
+  (`StatifierOban.Timer.pending_for/2`), and the first attempt after the
+  execution is unparked delivers the event. Mapping the refusal to
+  `{:discarded, _}` instead cancels the job for good: the execution
+  comes back from the park with its timer gone and nothing on it to say
+  so.
+
+  The retry is bounded. The timer worker sets no `max_attempts`, so
+  Oban's default of 20 applies, and Oban's default backoff spreads those
+  attempts over about twelve days. A park that outlasts them ends the
+  job `discarded` by Oban - an exhausted job, not a spec 6.2 discard: no
+  `{:discarded, reason}` is recorded and no
+  `[:statifier_oban, :timer, :discarded]` event is emitted - and the
+  timer does not fire on its own after the execution is unparked. A host
+  whose parks can run that long revives the exhausted job with
+  `Oban.retry_job/2` after the unpark, before Oban's pruner removes the
+  row. Scheduling the same effect again does not revive it: the
+  discarded row still holds the timer's dedup guard
+  (`StatifierOban.Timer.Worker`), so the insert is a no-op.
+
   ## Restoring the caller's trace context
 
   `caller_context` (st-ADR-0063) is the opaque host slot the sending

@@ -714,6 +714,12 @@ defmodule MyApp.DurableTimerDelivery do
         # execution. A spec 6.2 discard, not an environment fact.
         {:discarded, :terminated}
 
+      {:error, {:needs_migration, _execution}} ->
+        # Parked by a chart migration: not finished, and it takes events
+        # again once unparked. Raise so the job retries; a discard here
+        # cancels the timer for good.
+        raise "#{execution_id} is parked; retrying the timer"
+
       {:error, reason} ->
         # What remains leaves this execution's liveness unanswered - an
         # unreachable repo, a position that will not decode - so the job
@@ -735,6 +741,23 @@ what an empty registry lookup means for the default. Every other error is
 left to raise, which is what puts the job back in Oban's hands. The chart the
 execution runs is the host's to resolve - this package stores no chart
 identity on a timer job - hence `machine_for!/1`.
+
+`{:error, {:needs_migration, execution}}` is the one error with an arm of its
+own, because it is the easiest to mistake for a discard. `step/5` answers it
+for an execution a chart migration parked: the execution is not finished, and
+it takes events again once it is unparked. A timer firing into it is retried,
+never discarded - the arm raises, the job goes `retryable`, and the first
+attempt after the unpark delivers the event. A delivery that maps this error to
+`{:discarded, _}` cancels the job, and the execution comes back from the park
+with its timer gone. The retries are bounded: the timer worker sets no
+`max_attempts`, so Oban's default of 20 applies, spread by Oban's default
+backoff over about twelve days. A park that outlasts them ends the job
+`discarded` by Oban, and the timer does not fire on its own after the unpark; a
+host whose parks can run that long revives the job with `Oban.retry_job/2`
+after the unpark, before Oban's pruner removes the row. Scheduling the same
+effect again does not revive it, because the discarded row still holds the
+timer's dedup guard. The `StatifierOban.Timer.Delivery` moduledoc states the
+same rule.
 
 The one config line that selects it is the `:delivery` seam:
 
