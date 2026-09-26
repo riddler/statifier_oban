@@ -549,3 +549,56 @@ flip.
   with `:retry` as the default, and no code path cancels on
   `:invalid_delivery`, `:invalid_codec` or `:codec_failed`, so the
   reopen trigger stands as written.
+
+## Amendment (2026-09-26): a handler may cap its own attempts, and the terminal attempt moves with the cap
+
+Status: proposed (2026-09-26, sob-szd)
+
+Decision 1 above recognizes the terminal attempt as `attempt >=
+max_attempts`, read off the job row. Until now nothing in this package set
+`max_attempts` on an invoke job, so every job had Oban's default of 20, and
+a handler whose work it cannot safely repeat - an outbound send it cannot
+key on `invoke_id` - had no way to say "try once" short of making the work
+idempotent.
+
+### Decision
+
+**A handler declares its cap as an option of the `use`:
+`use StatifierOban.Invoke.Handler, max_attempts: n`.** The spelling is a
+`use` option rather than a callback because the cap is a fixed property of
+the handler module, known when it compiles: a positive integer is checked
+then, and anything else fails the compile (`__max_attempts__!/2` in
+`lib/statifier_oban/invoke/handler.ex`). A callback would be read at
+enqueue time and would need an error for a bad return, which is a new
+member of the enqueue's error set; the option needs none.
+
+**The cap rides on the job as its `max_attempts`, fixed at enqueue
+time.** The enqueue writes it into the job's options, and a handler that
+declared none adds nothing, so its jobs keep Oban's default exactly as
+before (`put_max_attempts/2` in `lib/statifier_oban/invoke/handler.ex`).
+A module implementing the behaviour without the `use` has no option to
+declare and adds nothing either. A cap changed in a later deploy applies
+to the jobs enqueued after it, as the run-time bound and the
+`:unresolved_handler` policy do.
+
+**Decision 1 is not changed; the terminal attempt moves with the cap.**
+The worker still reads `attempt >= max_attempts` off the row
+(`maybe_fail/7` in `lib/statifier_oban/invoke/worker.ex`, read at
+`4ed3749`), so under a cap of 1 the first failing attempt is the terminal
+one and delivers `error.communication.invoke.<invoke_id>` with
+`"attempts" => 1`. No new event name, failure class, function or error
+family is created.
+
+### Consequences
+
+A handler with a side effect it would rather not repeat can bound Oban's
+retries without wiring anything else, and the chart still hears about the
+failure. A handler that declares no cap behaves exactly as before.
+
+The cap bounds retries; it does not change the at-least-once contract the
+handler moduledoc cites, and it is not an at-most-once guarantee. A job
+lost mid-attempt on its last attempt never reaches decision 1's check:
+`Oban.Plugins.Lifeline` discards an executing job with no attempts left
+rather than rescuing it, so nothing is delivered, and a cap makes that
+last attempt come sooner. The code this Amendment describes arrives in the same
+change as the Amendment, `sob-szd`.

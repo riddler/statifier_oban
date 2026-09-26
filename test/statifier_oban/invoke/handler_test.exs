@@ -62,6 +62,35 @@ defmodule StatifierOban.Invoke.HandlerTest do
     def run(%Invoke{}), do: {:error, :gateway_down}
   end
 
+  # The attempt cap's handlers (sob-szd): one capped at a single attempt
+  # whose work always fails, reporting each attempt to the process that
+  # runs it (the draining test process), and one capped at three whose
+  # work is never reached.
+  defmodule CappedHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler, max_attempts: 1
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{invoke_id: invoke_id}) do
+      send(self(), {:capped_attempt, invoke_id})
+      {:error, :gateway_down}
+    end
+  end
+
+  defmodule CappedAtThreeHandler do
+    @moduledoc false
+    use StatifierOban.Invoke.Handler, max_attempts: 3
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{}}
+  end
+
   # The acceptance handler for the run-time bound (sob-eh8): a config
   # bounding every attempt at one second, and work that takes two.
   defmodule OverrunningHandler do
@@ -678,6 +707,114 @@ defmodule StatifierOban.Invoke.HandlerTest do
 
   # -- the run callback (sob-7b1) -----------------------------------------
 
+  # The attempt cap (sob-szd): a handler declaring `max_attempts: 1` gets
+  # one attempt, and that attempt is the terminal one, so ADR-0005's
+  # failure delivery fires on it. The drain runs scheduled jobs and
+  # recurses, so an uncapped job would be attempted again here.
+  #
+  # sabotage: `put_max_attempts/2` returned the opts unchanged - went red
+  # (the stored job carried Oban's default of 20, not 1; with that
+  # assert removed, the drain ran a second attempt), reverted.
+  test "acceptance: a handler capped at one attempt is attempted once and parks the execution" do
+    {:ok, machine} = Statifier.compile(@failure_chart)
+
+    {:ok, session} =
+      Statifier.Session.start_link(machine,
+        invoke_handlers: %{@failure_type => CappedHandler}
+      )
+
+    scope = Statifier.Session.session_id(session)
+    handler_id = "sob-szd-capped-#{unique()}"
+
+    :telemetry.attach(
+      handler_id,
+      [:statifier_oban, :invoke, :failed],
+      &__MODULE__.relay_telemetry/4,
+      self()
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    wait_until(fn -> match?([_job], stored_jobs(scope, "inv_fail_e2e")) end)
+    assert [%Oban.Job{max_attempts: 1}] = stored_jobs(scope, "inv_fail_e2e")
+
+    Oban.drain_queue(TestInvokeHandler.oban_name(),
+      queue: TestInvokeHandler.queue(),
+      with_scheduled: true,
+      with_recursion: true
+    )
+
+    assert_received {:capped_attempt, "inv_fail_e2e"}
+    refute_received {:capped_attempt, "inv_fail_e2e"}
+
+    assert [%Oban.Job{state: "discarded", attempt: 1}] = stored_jobs(scope, "inv_fail_e2e")
+
+    assert_received {:telemetry_event, %{attempts: 1},
+                     %{invoke_id: "inv_fail_e2e", reason: "run_failed", handler: CappedHandler}}
+
+    wait_until(fn ->
+      Statifier.Session.status(session).configuration == MapSet.new(["needs_attention"])
+    end)
+  end
+
+  # sabotage: `put_max_attempts/2` wrote a fixed 1 whatever the handler
+  # declared - went red (the stored job carried 1, not 3), reverted.
+  test "a handler's declared cap is stored as the job's max_attempts" do
+    scope = "sess_invoke_capped_#{unique()}"
+
+    assert :ok =
+             Handler.perform(
+               CappedAtThreeHandler,
+               {:start, invoke_fixture("inv_capped")},
+               ctx_for(scope)
+             )
+
+    assert [%Oban.Job{max_attempts: 3}] = stored_jobs(scope, "inv_capped")
+  end
+
+  # Oban's schema default, the one today's jobs get: the invoke worker
+  # sets no `max_attempts` of its own.
+  #
+  # sabotage: `put_max_attempts/2`'s `nil` arm put `max_attempts: 1` -
+  # went red (the uncapped handler's job carried 1), reverted.
+  test "a handler declaring no cap stores the invoke worker's default max_attempts" do
+    scope = "sess_invoke_uncapped_#{unique()}"
+
+    assert :ok =
+             Handler.perform(
+               TestInvokeHandler,
+               {:start, invoke_fixture("inv_uncapped")},
+               ctx_for(scope)
+             )
+
+    assert [%Oban.Job{max_attempts: max_attempts}] = stored_jobs(scope, "inv_uncapped")
+    assert max_attempts == 20
+  end
+
+  # sabotage: `__max_attempts__!/2`'s positive-integer clause accepted any
+  # integer - went red (0 and -1 compiled clean), reverted.
+  test "a cap that is not a positive integer fails the handler's compile" do
+    for bad <- ["0", "-1", "\"1\"", ":infinity", "1.5"] do
+      error =
+        assert_raise ArgumentError, fn ->
+          Code.compile_string("""
+          defmodule StatifierOban.Invoke.HandlerTest.BadCapHandler#{unique()} do
+            use StatifierOban.Invoke.Handler, max_attempts: #{bad}
+
+            @impl StatifierOban.Invoke.Handler
+            def config, do: StatifierOban.TestInvokeHandler.config()
+
+            @impl StatifierOban.Invoke.Handler
+            def run(_invoke), do: {:ok, %{}}
+          end
+          """)
+        end
+
+      assert error.message =~ "max_attempts"
+      assert error.message =~ "positive integer"
+    end
+  end
+
   # sabotage: `__before_compile__/1`'s check was short-circuited to never
   # raise - went red (the run-less module compiled clean), reverted.
   test "a use-ing module defining neither run arity fails to compile, naming both" do
@@ -698,6 +835,13 @@ defmodule StatifierOban.Invoke.HandlerTest do
   end
 
   # -- helpers ------------------------------------------------------------
+
+  # Attached as a module function rather than a closure: `:telemetry`
+  # logs a performance warning for a local capture.
+  @doc false
+  def relay_telemetry(_event, measurements, metadata, listener) do
+    send(listener, {:telemetry_event, measurements, metadata})
+  end
 
   defp unique, do: :erlang.unique_integer([:positive])
 
