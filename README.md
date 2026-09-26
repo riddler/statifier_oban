@@ -645,6 +645,41 @@ fixed at enqueue time, the same way the run-time bounds are: it travels
 in the job's meta, so a job stored before the option existed reads as
 `:retry`.
 
+## Capping a handler's attempts
+
+An invoke job is attempted up to Oban's default of 20 times: the invoke
+worker sets no `max_attempts` of its own. A handler whose work should not
+be repeated that often - an overdue notice mailed to a patron through a
+mailer it cannot key on `invoke_id`, for example - declares its own cap
+on the `use`:
+
+```elixir
+defmodule MyApp.OverdueNoticeHandler do
+  use StatifierOban.Invoke.Handler, max_attempts: 1
+
+  @impl StatifierOban.Invoke.Handler
+  def config, do: MyApp.statifier_oban_config()
+
+  @impl StatifierOban.Invoke.Handler
+  def run(invoke), do: MyApp.Loans.send_overdue_notice(invoke.params)
+end
+```
+
+Every job the handler enqueues carries the cap as its `max_attempts`. The
+value must be a positive integer, and anything else fails the handler's
+compile. A handler that declares no cap adds nothing to its jobs, so they
+keep the default. Like the run-time bounds, the cap is fixed when the job
+is enqueued: changing it affects later jobs, not stored ones.
+
+The permanent-failure delivery follows the cap. With `max_attempts: 1`, a
+`run/1` returning `{:error, reason}` is attempted once, and that attempt
+delivers `error.communication.invoke.<invoke_id>` with `"attempts" => 1`
+(ADR-0005). The cap bounds Oban's retries; it does not relax the
+at-least-once contract, so keying the work on `invoke_id` is still what
+makes a repeat safe. A job whose node is lost during its last attempt
+delivers nothing, capped or not: `Oban.Plugins.Lifeline` discards a job
+with no attempts left rather than rescuing it.
+
 ## The contract this package implements
 
 The host-facing pattern is already specified upstream, and this package is one

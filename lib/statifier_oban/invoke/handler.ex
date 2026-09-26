@@ -144,6 +144,43 @@ defmodule StatifierOban.Invoke.Handler do
   `Statifier.Testing.HandlerCase`), or feed anything to a dead execution
   (the delivery seam discards a completed invoke against a dead or halted
   execution the same way a fired timer is discarded).
+
+  ## Capping a handler's attempts
+
+  By default an invoke job gets the invoke worker's own attempt count,
+  Oban's default of 20. A handler whose work should not be repeated
+  that often - an overdue notice mailed to a patron, say, through a
+  mailer it cannot key on `invoke_id` - caps its own jobs with the
+  `:max_attempts` option of the `use`:
+
+      defmodule MyApp.OverdueNoticeHandler do
+        use StatifierOban.Invoke.Handler, max_attempts: 1
+
+        @impl StatifierOban.Invoke.Handler
+        def config, do: MyApp.statifier_oban_config()
+
+        @impl StatifierOban.Invoke.Handler
+        def run(invoke), do: MyApp.Loans.send_overdue_notice(invoke.params)
+      end
+
+  The value is a positive integer, checked when the handler compiles;
+  anything else fails the compile. It is written onto every job the
+  handler enqueues as that job's `max_attempts`, so it is fixed at
+  enqueue time: changing it changes the jobs enqueued afterwards, not
+  the ones already stored. Leaving the option out adds nothing to the
+  job, which keeps the default exactly.
+
+  The cap moves the terminal attempt and nothing else. The permanent
+  failure above is still delivered, on the capped attempt: with
+  `max_attempts: 1` a `run/1` returning `{:error, reason}` is attempted
+  once and delivers `error.communication.invoke.<invoke_id>` with
+  `"attempts" => 1` (ADR-0005, as amended for this option). It is a
+  bound on Oban's retries, not a relaxation of the at-least-once
+  contract above: keying the work on `invoke_id` is still what makes a
+  repeat safe. A node lost in the middle of the capped attempt leaves
+  the job to `Oban.Plugins.Lifeline`, which discards a job with no
+  attempts left without running it again - and without delivering, as
+  for any job that dies mid-attempt on its last attempt.
   """
 
   import Ecto.Query, only: [where: 3]
@@ -304,11 +341,21 @@ defmodule StatifierOban.Invoke.Handler do
 
   @optional_callbacks run: 1, run: 2
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    max_attempts = if Keyword.keyword?(opts), do: Keyword.get(opts, :max_attempts)
+
     quote do
       @behaviour Statifier.Invoke.Handler
       @behaviour StatifierOban.Invoke.Handler
       @before_compile StatifierOban.Invoke.Handler
+
+      @statifier_oban_max_attempts StatifierOban.Invoke.Handler.__max_attempts__!(
+                                     unquote(max_attempts),
+                                     __MODULE__
+                                   )
+
+      @doc false
+      def __statifier_oban_max_attempts__, do: @statifier_oban_max_attempts
 
       @impl Statifier.Invoke.Handler
       def start(%Statifier.Effect.Invoke{} = invoke, _ctx),
@@ -348,6 +395,25 @@ defmodule StatifierOban.Invoke.Handler do
     :ok
   end
 
+  @doc false
+  # The `use`'s `:max_attempts` option, checked while the handler module
+  # compiles: absent is `nil` (the job keeps the invoke worker's own
+  # default), and anything but a positive integer fails the compile rather
+  # than the first enqueue.
+  @spec __max_attempts__!(term(), module()) :: pos_integer() | nil
+  def __max_attempts__!(nil, _module), do: nil
+
+  def __max_attempts__!(max_attempts, _module)
+      when is_integer(max_attempts) and max_attempts > 0,
+      do: max_attempts
+
+  def __max_attempts__!(other, module) do
+    raise ArgumentError,
+          "#{inspect(module)} uses StatifierOban.Invoke.Handler with max_attempts: " <>
+            "#{inspect(other)}; expected a positive integer, or no :max_attempts " <>
+            "to keep the invoke worker's default"
+  end
+
   @doc """
   The one implementation behind every `use`-ing module's `perform/2`:
   routes a `{:start, invoke}` payload to `perform_start/3` and a
@@ -376,7 +442,10 @@ defmodule StatifierOban.Invoke.Handler do
   (see `StatifierOban.Config`'s run-time bounds section), and so does
   `:unresolved_handler` when it is `:cancel` (the default, `:retry`,
   writes nothing - see the moduledoc's unresolvable-handler policy
-  section).
+  section). A handler that declared `use StatifierOban.Invoke.Handler,
+  max_attempts: n` stores `n` as the job's `max_attempts`; one that
+  declared none stores the invoke worker's default ("Capping a
+  handler's attempts" in this module's moduledoc).
 
   The config's `:opaque_codec` is fixed at enqueue time: read once from
   `handler.config()`, and run over the effect's host-opaque `params` and
@@ -408,12 +477,18 @@ defmodule StatifierOban.Invoke.Handler do
     with {:ok, queue} <- invoke_queue(config),
          {:ok, args} <- JobArgs.from_invoke(scope, handler, invoke, config.opaque_codec),
          changeset =
-           Worker.new(args,
-             queue: queue,
-             meta:
-               %{"delivery" => Atom.to_string(config.invoke_delivery)}
-               |> JobTimeout.put(config.invoke_timeout)
-               |> UnresolvedHandler.put(config.unresolved_handler)
+           Worker.new(
+             args,
+             put_max_attempts(
+               [
+                 queue: queue,
+                 meta:
+                   %{"delivery" => Atom.to_string(config.invoke_delivery)}
+                   |> JobTimeout.put(config.invoke_timeout)
+                   |> UnresolvedHandler.put(config.unresolved_handler)
+               ],
+               handler
+             )
            ),
          {:ok, job} <- Oban.insert(config.oban, changeset) do
       Telemetry.invoke_enqueued(scope, handler, invoke, job)
@@ -422,6 +497,23 @@ defmodule StatifierOban.Invoke.Handler do
       {:error, reason} ->
         Telemetry.invoke_enqueue_rejected(scope, handler, invoke, reason)
         {:error, reason}
+    end
+  end
+
+  # The handler's attempt cap, from the `use`'s `:max_attempts` option,
+  # rides on the job as its `max_attempts`. A handler that declared none -
+  # and a module implementing the behaviour without the `use`, which has no
+  # option to declare - adds nothing, so the job keeps the invoke worker's
+  # own default exactly as before the option existed.
+  @spec put_max_attempts(keyword(), module()) :: keyword()
+  defp put_max_attempts(opts, handler) do
+    if function_exported?(handler, :__statifier_oban_max_attempts__, 0) do
+      case handler.__statifier_oban_max_attempts__() do
+        nil -> opts
+        max_attempts -> Keyword.put(opts, :max_attempts, max_attempts)
+      end
+    else
+      opts
     end
   end
 
