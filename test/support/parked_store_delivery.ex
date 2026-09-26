@@ -6,8 +6,10 @@ defmodule StatifierOban.ParkedStoreDelivery do
 
   The store is an `Agent` holding each scope's status. `step/2` answers
   with the shapes `statifier_persistence`'s `step/5` answers: an active
-  execution steps, a finished one is `{:discarded, %{status: status}}`,
-  an unknown one is `{:error, :execution_not_found}`, and a parked one is
+  execution steps and answers `{:ok, execution, machine_state}` (the
+  machine state a stand-in map), a finished one is
+  `{:discarded, %{status: status}}`, an unknown one is
+  `{:error, :execution_not_found}`, and a parked one is
   `{:error, {:needs_migration, execution}}`. `deliver/2` maps them with
   the README module's arms, so the needs_migration arm raises.
 
@@ -52,7 +54,7 @@ defmodule StatifierOban.ParkedStoreDelivery do
     event = Delivery.fired_event(execution_id, effect)
 
     case step(execution_id, event) do
-      {:ok, _execution} ->
+      {:ok, _execution, _machine_state} ->
         :delivered
 
       {:discarded, %{status: status}} ->
@@ -70,14 +72,14 @@ defmodule StatifierOban.ParkedStoreDelivery do
   end
 
   @spec step(String.t(), Statifier.Event.t()) ::
-          {:ok, map()} | {:discarded, map()} | {:error, term()}
+          {:ok, map(), map()} | {:discarded, map()} | {:error, term()}
   defp step(execution_id, event) do
     %{test_pid: test_pid, executions: executions} = Agent.get(__MODULE__, & &1)
 
     case Map.fetch(executions, execution_id) do
       {:ok, :active} ->
         send(test_pid, {:parked_store_delivered, execution_id, event})
-        {:ok, %{execution_id: execution_id, status: :active}}
+        {:ok, %{execution_id: execution_id, status: :active}, %{}}
 
       {:ok, :needs_migration} ->
         {:error, {:needs_migration, %{execution_id: execution_id, status: :needs_migration}}}
