@@ -446,7 +446,7 @@ by this package's suite rather than by any list written here. Recorded by
 
 ## Amendment (2026-09-26): a deferred invocation mints one event
 
-Status: proposed (2026-09-26, sob-9xp)
+Status: accepted (2026-09-26, sob-9xp)
 
 ADR-0009 added a fourth return to `run/1` and `run/2`: `:deferred`, meaning the
 work was handed on and the answer will come later, from outside the job, through
@@ -513,3 +513,77 @@ section already gives it.
 amendment**, and a dated Note on that record says so by addition. The rest of
 that bullet still holds: the eventual answer is invisible to this package, and
 the three answer events do not fire for a deferral.
+
+## Note (2026-09-26): where a deferred invocation's caller context is, corrected
+
+This Note decides nothing and changes no decision or amendment above it.
+It corrects one sentence of the Amendment of 2026-09-26, in its paragraph
+"It carries no `caller_context`" (`:502-505`): "The context is already on
+`:enqueued`'s invocation under the same `invoke_id`." That sentence is read
+as superseded by this Note. Every anchor below was read at `c16f87a`, the
+`v0.15.0` tag.
+
+- **The context is not on the `:enqueued` event.** `[:statifier_oban,
+  :invoke, :enqueued]` carries `scope`, `invoke_id`, `macrostep`,
+  `handler`, `queue`, `conflict?` and `job_id`, and no `caller_context`
+  (`StatifierOban.Telemetry.invoke_enqueued/4`; the moduledoc table at
+  `lib/statifier_oban/telemetry.ex:65`; `docs/telemetry.md:156`).
+- **It is on the stored invocation effect.** The enqueue writes the
+  effect's `caller_context` into the job's args as an opaque payload
+  (`StatifierOban.Invoke.JobArgs.from_invoke/4`, called from
+  `StatifierOban.Invoke.Handler`'s private `enqueue/4`), and
+  `StatifierOban.Invoke.JobArgs.to_invoke/1` reads it back onto the
+  `%Statifier.Effect.Invoke{}` the worker runs. That stored context is
+  what reaches the host's delivery when an answer is delivered through
+  this package; for a deferral nothing is delivered through it.
+- **What a telemetry consumer does.** It correlates a deferred
+  invocation's events by `invoke_id`, and reads the context from none of
+  them: neither `:enqueued` nor `:deferred` carries it. The fan-out arm's
+  `:fan_out` and `:child_started` carry `caller_context` for decision 7's
+  reason; a deferral is not that arm.
+
+The rest of the paragraph stands: `:deferred` carries no `caller_context`,
+and neither does `:delivered`, whose place it takes.
+
+## Note (2026-09-26): the deferred-invocation Amendment accepted
+
+A Note, not an amendment: it decides nothing and changes no decision or
+amendment above it. The operator's word of 2026-09-26 is to accept the
+records whose code has been published, and the Amendment of 2026-09-26
+above is one: its `Status:` line moved from `proposed` to `accepted`, and
+it is accepted as the Note above corrects it, that Note being the
+superseding record for its one sentence on where the caller context is.
+Its code landed in `79dbf01` and is carried by the published release
+0.15.0 (tag `v0.15.0`, `c16f87a`, published on Hex 2026-09-26). The head
+Status line and the ADR index row already read accepted and are
+unchanged. Every claim was read at `c16f87a`, which is also `main` at the
+time of the flip; no commit between `79dbf01` and that tag touches `lib/`,
+`test/` or `docs/telemetry.md`.
+
+- The event and the count: `@invoke_kinds` in
+  `lib/statifier_oban/telemetry.ex` holds ten kinds, `:deferred` last, so
+  `StatifierOban.Telemetry.events/0` returns fifteen names, five `:timer`
+  and ten `:invoke`; `test/statifier_oban/telemetry_test.exs` asserts the
+  list and the count of fifteen. No existing name, measurement or
+  metadata key moved.
+- The table row: `StatifierOban.Telemetry.invoke_deferred/5` emits
+  `[:statifier_oban, :invoke, :deferred]` with measurements `system_time`
+  and `attempt` (the job's own) and metadata `scope`, `invoke_id`,
+  `macrostep`, `handler`, `delivery` and `job_id`.
+- The emission site: the `:deferred` arm of `StatifierOban.Invoke.Worker`'s
+  private `execute/5` calls `invoke_deferred/5` and answers `:ok`, calling
+  neither door.
+- `delivery` is the module the enqueue writes into the job's meta from
+  the config's `:invoke_delivery` (`StatifierOban.Invoke.Handler`'s
+  private `enqueue/4`).
+- The last event: the test "a deferred invocation emits :deferred and
+  neither answer event" in `telemetry_test.exs` refutes `:delivered`,
+  `:discarded` and `:failed`.
+- No `caller_context` on `:deferred` or `:delivered`, read in their
+  emitters; the sentence on `:enqueued` is read as the Note above
+  corrects it.
+- Decision 9: the metadata carries no `data`, `params` or `content`.
+- ADR-0009 carries the dated Note of 2026-09-26 saying its Consequences
+  sentence is changed by this Amendment, and `docs/telemetry.md` carries
+  the row (`:190`) and a count of fifteen.
+- The 0.15.0 section of `CHANGELOG.md` names the event under Added.
