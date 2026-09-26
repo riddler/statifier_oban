@@ -1,6 +1,6 @@
 # ADR-0009: Deferred completion - a handler may hand its work on and be answered later
 
-Status: proposed (2026-09-25, sob-c6g)
+Status: accepted (2026-09-25, sob-c6g)
 
 ## Context
 
@@ -115,3 +115,34 @@ at-least-once contract already asks of every `run/1`.
   execution through the door, and the job then completes without delivering.
 - The return set of `run/1` and `run/2` grows, so the change ships in a minor
   release. A handler that never returns `:deferred` behaves exactly as before.
+
+## Note (2026-09-25): accepted, the code shipped in 0.14.0
+
+The operator accepted this record on 2026-09-25. The code that implements
+it is `f155ff5` (`sob-c6g`, PR 110), carried by the published release
+0.14.0 (tag `v0.14.0`, `35e8534`). The status line at the top flips in
+place from proposed to accepted, and the ADR index row with it; no other
+line of the record changes. Every decision was read at that tag, which
+is also `main` at the time of the flip.
+
+- Decision 1: `t:StatifierOban.Invoke.Handler.deferred/0` is `:deferred`,
+  and the callback types of `run/1` and `run/2` carry it
+  (`lib/statifier_oban/invoke/handler.ex`).
+- Decision 2: the `:deferred` arm of `StatifierOban.Invoke.Worker`'s
+  private `execute/5` answers `:ok` and calls neither door.
+- Decision 3: `StatifierOban.Invoke.Delivery` declares `deliver/3`,
+  `deliver_failure/3` and their four-argument forms, unchanged by the
+  deferral.
+- Decision 4: no job, row or timeout is added for an outstanding answer;
+  the cancel path is `StatifierOban.Invoke.Handler.perform_cancel/3`,
+  unchanged.
+- Decision 5 and the Consequences: `test/statifier_oban/invoke/worker_test.exs`
+  carries "a deferred return completes the job without delivering through
+  either door", and the 0.14.0 section of `CHANGELOG.md` names the new
+  return.
+
+Two follow-ups sit on the accepted text and do not hold the flip, each to
+land as a dated Note or Amendment on this record: sob-v6x, on decision
+4's narration of a call chain and decision 2's naming of a private
+function, and sob-9xp, on whether a deferral gets an invoke telemetry
+event of its own, which the Consequences say it does not today.
