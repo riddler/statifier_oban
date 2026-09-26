@@ -835,14 +835,14 @@ either answer, because dedup and cancellation query them directly.
 
 ## Telemetry
 
-`StatifierOban.Telemetry` emits fourteen `[:statifier_oban, ...]` events -
-five on the timer half, nine on the invoke half - covering the one thing
+`StatifierOban.Telemetry` emits fifteen `[:statifier_oban, ...]` events -
+five on the timer half, ten on the invoke half - covering the one thing
 neither Oban nor Statifier can see: the durable step between the effect and
 the job row. Whether the write happened and whether it was new (`conflict?`),
 which statechart identity an opaque job row belongs to, the fan-out's own
-dispatch and per-child starts, and the spec-level verdicts that are successes
-for Oban and non-events for the chart - the 6.2 discard of a timer firing into
-a dead execution above all.
+dispatch and per-child starts, a deferred invocation's hand-off, and the
+spec-level verdicts that are successes for Oban and non-events for the chart -
+the 6.2 discard of a timer firing into a dead execution above all.
 
 Attach to the whole surface without hand-copying names:
 

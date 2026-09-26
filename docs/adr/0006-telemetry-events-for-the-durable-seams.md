@@ -443,3 +443,73 @@ The premise surface is `lib/statifier_oban/telemetry.ex` at `e3422bb`. The
 count of fourteen is fixed by `events/0`'s single definition site and is held
 by this package's suite rather than by any list written here. Recorded by
 `sob-v9s`.
+
+## Amendment (2026-09-26): a deferred invocation mints one event
+
+Status: proposed (2026-09-26, sob-9xp)
+
+ADR-0009 added a fourth return to `run/1` and `run/2`: `:deferred`, meaning the
+work was handed on and the answer will come later, from outside the job, through
+the host's `StatifierOban.Invoke.Delivery` implementation. Its Consequences
+record what that left in this contract:
+
+> The package emits no invoke telemetry event of its own for a deferral: the
+> job's completion is visible as Oban's own job stop event, and the eventual
+> answer is invisible to this package, so ADR-0006's
+> `[:statifier_oban, :invoke, :delivered | :discarded | :failed]` events do
+> not fire for it.
+
+A host watching this stream therefore cannot tell a deferred invocation from a
+missing one: the invocation's `:enqueued` event is followed by nothing from this
+package, which is also what an invocation whose job never ran looks like. The
+hand-off is a fact only this package sees - Oban reports a job that completed,
+and the handler's return that made it complete is inside the job - so it is the
+same kind of fact this record already emits for the fan-out arm, the other arm
+that completes without delivering.
+
+**This record therefore adds one event name, and the count moves from fourteen
+to fifteen: five `:timer` and ten `:invoke`.** Adding a name is additive under
+decision 4's discipline - nothing is renamed, nothing is removed, and no
+existing event changes its measurements or its metadata - so it is an amendment
+rather than a successor record, and `StatifierOban.Telemetry.events/0` remains
+the single enumerable definition site (`lib/statifier_oban/telemetry.ex`,
+`@invoke_kinds`, this change).
+
+| Event | Emitted from | Measurements | Metadata |
+|---|---|---|---|
+| `[:statifier_oban, :invoke, :deferred]` | `Invoke.Worker`'s deferred arm, when `run/1` or `run/2` answers `:deferred` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
+
+The emission is `StatifierOban.Telemetry.invoke_deferred/5` (this change),
+called from the `:deferred` arm of `StatifierOban.Invoke.Worker`'s private
+`execute/5` (this change), which still answers `:ok` and calls neither door.
+
+**It is a delivery-seam event, and it is not a verdict.** It is emitted inside
+the job, on the node that ran it, like `:delivered`, and it carries
+`:delivered`'s keys: `attempt` is the deferring attempt's own, and `delivery` is
+the module named on the row - written there at enqueue from the config's
+`:invoke_delivery` (`StatifierOban.Invoke.Handler`, read at
+`d44352d`), the door the job would have answered through and the one ADR-0009
+decision 3 names for the answer that comes later. What it does not say is that
+anything reached the execution: nothing did, and the invocation stays open.
+
+**It is the last event this package emits for the invocation.** The answer
+comes through the host's delivery implementation, called by whoever finishes
+the work, and ADR-0009 decision 4 is that this package does nothing while the
+answer is outstanding. No `:delivered`, `:discarded` or `:failed` event follows
+a deferral, and none is added for the eventual answer: it is not this package's
+fact to report.
+
+**It carries no `caller_context`.** Neither does `:delivered`, the event whose
+place this one takes in a deferred invocation's stream, and a consumer that
+reads outcomes per invocation reads the same keys off either. The context is
+already on `:enqueued`'s invocation under the same `invoke_id`.
+
+**Decision 9 holds unchanged.** Nothing host-opaque reaches this event; the
+effect's `data`, `params` and `content` are as absent as they are everywhere
+else in this contract, and every key above keeps the status the Cardinality
+section already gives it.
+
+**The ADR-0009 Consequences sentence quoted above is changed by this
+amendment**, and a dated Note on that record says so by addition. The rest of
+that bullet still holds: the eventual answer is invisible to this package, and
+the three answer events do not fire for a deferral.

@@ -1,7 +1,7 @@
 # Telemetry and the OpenTelemetry bridge half
 
 This note is the design record for what `statifier_oban` emits and what it
-deliberately leaves to others. The fourteen events below are implemented in
+deliberately leaves to others. The fifteen events below are implemented in
 `StatifierOban.Telemetry` (sob-kmw), which owns every event name and is the
 only module here that calls `:telemetry.execute/3`. This note and
 `docs/adr/0006-telemetry-events-for-the-durable-seams.md` are the contract it
@@ -187,6 +187,7 @@ Emitted on the Oban worker process, inside the job.
 | `[:statifier_oban, :invoke, :delivered]` | `Invoke.Worker.perform/1`, after `:delivered` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
 | `[:statifier_oban, :invoke, :discarded]` | `Invoke.Worker.perform/1`, on `{:discarded, reason}` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `reason`, `job_id` |
 | `[:statifier_oban, :invoke, :failed]` | `Invoke.Worker`'s terminal-attempt failure path | `system_time`, `attempts` | `scope`, `invoke_id`, `reason`, `detail`, `handler`, `job_id` |
+| `[:statifier_oban, :invoke, :deferred]` | `Invoke.Worker.perform/1`, when `run/1` or `run/2` answers `:deferred` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
 
 **There is no lateness measurement here, on purpose.** How far past its due
 time a timer actually fired is the number a durable timer most wants to make
@@ -218,6 +219,19 @@ the cancelling attempt's own number for the other three. It fires on the
 attempt that gives up for good, never on one that will be retried, for the
 same reason: a retry that will be tried again is not a fact worth reporting,
 and non-terminal failures are already `[:oban, :job, :exception]`.
+
+`[:statifier_oban, :invoke, :deferred]` is the one event in this table that
+is not a verdict. The handler handed its work on (ADR-0009), the job
+completes without delivering, and the invocation stays open until whoever
+finishes the work answers it through the host's
+`StatifierOban.Invoke.Delivery` implementation. It carries `:delivered`'s
+keys - `delivery` is the module on the row, the door the job would have
+answered through, and `attempt` is the deferring attempt's own - and it is
+the last event this package emits for that invocation: the eventual answer
+never passes through here, so no `:delivered`, `:discarded` or `:failed`
+follows it. Without it, a deferred invocation's `:enqueued` is followed by
+nothing, which is also what an invocation whose job never ran looks like.
+`ADR-0006`'s 2026-09-26 amendment records it.
 
 Where the seam delivers nothing, this emits nothing. Under the default
 `StatifierOban.Config` `:unresolved_handler` `:retry`, the environment errors
