@@ -35,8 +35,9 @@
   # them before a publish. The Docs stage runs `mix docs` and fails on any
   # ExDoc warning. The Doc links stage fails on the link rules ExDoc
   # accepts silently: a README relative link to a file not in the package
-  # files, a published relative link to a file that is not an extra, two
-  # extras sharing a basename, and a silent rewrite to a different extra.
+  # files, a relative link in a Markdown extra to a file that is not itself
+  # an extra (moduledoc links are the Docs stage's), two extras sharing a
+  # basename, and a silent rewrite to a different extra.
   # `:auto` runs both whenever ex_doc is installed, which it is in dev.
   docs: [enabled: :auto],
   doc_links: [enabled: :auto],
