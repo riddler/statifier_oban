@@ -163,3 +163,40 @@ package, and `[:statifier_oban, :invoke, :delivered | :discarded | :failed]`
 still do not fire for a deferral. No decision of this record moves; decision 2's
 outcome, a job that completes without delivering, is unchanged. The event ships
 in a minor release, because it grows the closed set `events/0` returns.
+
+## Note (2026-09-26): decisions 2 and 4 restated as facts
+
+This Note restates two decisions of the accepted text without moving either.
+Decision 2 names a function private to the worker, and decision 4's cancel
+bullet follows one call into the next; below, each fact stands on its own
+with one anchor, read at `72b08b3`. It is the first of the two follow-ups the
+2026-09-25 Note names. No line above changes.
+
+**Decision 2.** A `:deferred` return from `run/1` or `run/2` completes the
+Oban job, and neither door of the host's `StatifierOban.Invoke.Delivery`
+implementation is called. `StatifierOban.Invoke.Worker`'s moduledoc states
+this outcome, and `test/statifier_oban/invoke/worker_test.exs` pins it in "a
+deferred return completes the job without delivering through either door".
+The 2026-09-25 Note's decision 2 bullet and the 2026-09-26 Note name the
+same outcome by the worker's private function; the fact they record is this
+one. The event the 2026-09-26 Note adds is emitted by the invoke worker's
+deferred arm, through `StatifierOban.Telemetry.invoke_deferred/5`.
+
+**Decision 4.** While the answer is outstanding:
+
+- **Cancel is the existing path.** `StatifierOban.Invoke.Handler.perform_cancel/3`
+  cancels only the invocation's jobs that have not run. After a deferral the
+  deferring job has already completed (decision 2), so it cancels none.
+- **A late answer is a no-op.** The no-op is the session's, not the
+  delivery's: `Statifier.Session.done_invocation/3` (and
+  `failed_invocation/3`), in statifier 2.7.0 as `mix.lock` pins it,
+  documents a call for an invocation the session already popped as a
+  harmless no-op. While the execution is still running, the default
+  delivery's liveness check passes and it returns `:delivered`; the accepted
+  text's "a no-op in the default delivery" is this fact. When the execution
+  has ended or halted instead, `c:StatifierOban.Invoke.Delivery.deliver/3`
+  returns `{:discarded, reason}`.
+- **Stopping the other release is the host's.** This package holds nothing
+  that reaches the release the work was handed to; the README's "Enqueue
+  elsewhere, answer later" section says telling it to stop is the host's to
+  arrange.
