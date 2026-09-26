@@ -233,7 +233,7 @@ follows it. Without it, a deferred invocation's `:enqueued` is followed by
 nothing, which is also what an invocation whose job never ran looks like.
 `ADR-0006`'s 2026-09-26 amendment records it.
 
-Where the seam delivers nothing, this emits nothing. Under the default
+A failure outside the invocation emits nothing here. Under the default
 `StatifierOban.Config` `:unresolved_handler` `:retry`, the environment errors
 `:invalid_handler`, `:invalid_delivery`, `:invalid_codec` and `:codec_failed`
 say the deploy is wrong rather than anything about the invocation, and
