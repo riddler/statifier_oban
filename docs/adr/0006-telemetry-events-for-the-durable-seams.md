@@ -587,3 +587,20 @@ time of the flip; no commit between `79dbf01` and that tag touches `lib/`,
   sentence is changed by this Amendment, and `docs/telemetry.md` carries
   the row (`:190`) and a count of fifteen.
 - The 0.15.0 section of `CHANGELOG.md` names the event under Added.
+
+## Note (2026-09-26): where the deferred event is emitted, restated by its public anchor
+
+This Note decides nothing and changes no decision or amendment above it.
+It restates one sentence of the Amendment of 2026-09-26, the paragraph
+under its event table that begins "The emission is", which names a
+private function of the invoke worker and the hop from it to the
+emitter. A record cites the function a host can read, not the route to
+it, so that sentence is read as restated here; what it says happens is
+unchanged. The anchor below was read at `20f507f`.
+
+The event is emitted from the invoke worker's deferred arm: when `run/1`
+or `run/2` answers `:deferred`, the job emits
+`[:statifier_oban, :invoke, :deferred]`, the job completes without
+delivering, and the invocation stays open for whoever finishes the work
+to answer through the host's delivery module
+(`StatifierOban.Telemetry.invoke_deferred/5`).
