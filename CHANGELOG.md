@@ -10,6 +10,12 @@ fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.1
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
 
+## [0.16.0] 2026-09-26
+
+### Added
+
+- An invoke handler can cap its own attempts with `use StatifierOban.Invoke.Handler, max_attempts: n`; its jobs carry `n` as `max_attempts`, the permanent-failure event is delivered on the capped attempt, and a handler that declares no cap keeps Oban's default.
+
 ## [0.15.0] 2026-09-26
 
 ### Added
