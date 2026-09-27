@@ -178,25 +178,37 @@ No `lib/` file appears in that table, and step A explains why.
 
 The skill does not tag, push, open a request or publish, and this extension
 does not either: this recipe stops at the release commit. What it leaves
-undone splits two ways.
+undone splits three ways.
 
-The tag and the publish are the operator's, in every campaign and outside
-every campaign. `CLAUDE.md`'s authority table is explicit on both halves:
+The publish is the operator's, in every campaign and outside every
+campaign. `CLAUDE.md`'s authority table is explicit on it, and on the bump
+this recipe makes:
 
-- *a release (tag, `mix hex.publish`, GitHub release)* - trigger **never**,
+- *a release (`mix hex.publish`, GitHub release)* - trigger **never**,
   still unauthorized **always**: "publishing is the operator's, in every
-  campaign".
+  campaign". Its "Release preps" paragraph says the same of a docs
+  republish: no consent or relay delegates it.
 - *a version bump on a release bead's branch* - allowed only on "an
   operator-authorized release bead, inside a campaign carrying the operator's
   explicit consent", and still unauthorized "on any other bead, on main, or
   when the operator has not named this repo's release bead".
 
-The push and the request are not. The table's *`git push`, `gh pr create`*
-row makes them an agent's inside a campaign carrying the operator's
-explicit consent, once the terminology scan is clean over the full outbound
-content - the same gate `.claude/wurk/mr.md` describes, and the same
-consent the version-bump row above needs. They are simply not this
-recipe's to perform: `/wurk:mr` performs them afterwards, under that row.
+The tag is not reserved to the operator. The table's *tagging a release
+prep* row allows it once "the release bead's version bump is merged to
+`origin/main`", naming that version at the merged commit, and never before
+the bump is on `origin/main` or for any other version or commit. The
+"Release preps" paragraph says who: once the prep is merged, the conductor
+or the session that owns the release bead tags that merged commit with the
+new version and pushes the tag. It is not this recipe's to perform either,
+because the commit it would name does not exist until the prep merges.
+
+The push and the request are not reserved to the operator either. The
+table's *`git push`, `gh pr create`* row makes them an agent's inside a
+campaign carrying the operator's explicit consent, once the terminology
+scan is clean over the full outbound content - the same gate
+`.claude/wurk/mr.md` describes, and the same consent the version-bump row
+above needs. They are simply not this recipe's to perform: `/wurk:mr`
+performs them afterwards, under that row.
 
 (This section put all four - tag, push, request and publish - on the
 operator's side of the line, "in every campaign and outside every
@@ -205,7 +217,10 @@ campaign", from 2026-09-02 until 2026-09-06. The `git push`,
 2026-08-21, so the sentence was wrong the day it was written rather than
 overtaken later; it is the same class of drift `sob-kwz` fixed in
 `mr.md`'s push-authority section. Corrected on `sob-1cb`; the row always
-governed.)
+governed. The tag then stayed on the operator's side, inside the table's
+release row, until `CLAUDE.md` gave it its own row and the "Release preps"
+paragraph, recorded 2026-09-25; this section kept the old wording until
+it was brought into line with them.)
 
 So the one thing this recipe performs - the bump plus the step B promotion, on
 a named release bead's branch, under a campaign consent that names it - is

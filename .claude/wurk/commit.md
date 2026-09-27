@@ -73,20 +73,23 @@ section at release and removed.
 ## Version bump: never
 
 `mix.exs`'s `@version` is the version this package is at, and it moves only
-through a release bead; the authority table marks releases and version bumps
-as never an agent's otherwise. **No current version string is written here**,
-because one written down goes stale the moment a prep lands - it said `0.6.0`
-from 2026-09-02 until 2026-09-06 while `main` had moved to `0.7.0` twice
-over. Read the two facts instead:
+through a release bead; the authority table allows a version bump only on a
+release bead the operator has named, and marks a release (`mix hex.publish`,
+a GitHub release) as never an agent's. **No current version string is
+written here**, because one written down goes stale the moment a prep
+lands - it said `0.6.0` from 2026-09-02 until 2026-09-06 while `main` had
+moved to `0.7.0` twice over. Read the two facts instead:
 
 ```bash
 grep '@version "' mix.exs                 # what the package is at
-git tag --list --sort=-v:refname | head -1  # what the operator has tagged
+git tag --list --sort=-v:refname | head -1  # what has been tagged
 ```
 
-The tag and the Hex publish are the operator's, so the tagged version lags the
-attribute whenever a prep has landed and not yet been published. Never edit
-the version field as part of an ordinary commit.
+The tag follows the merged prep: once a release bead's bump is merged to
+`origin/main`, the conductor or the session that owns the release bead tags
+that merged commit with the new version, so the tagged version lags the
+attribute only between the prep's merge and its tag. The Hex publish is the
+operator's alone. Never edit the version field as part of an ordinary commit.
 
 ## Gate thresholds are the operator's call
 
