@@ -552,7 +552,7 @@ flip.
 
 ## Amendment (2026-09-26): a handler may cap its own attempts, and the terminal attempt moves with the cap
 
-Status: proposed (2026-09-26, sob-szd)
+Status: accepted (2026-09-26, sob-szd)
 
 Decision 1 above recognizes the terminal attempt as `attempt >=
 max_attempts`, read off the job row. Until now nothing in this package set
@@ -602,3 +602,41 @@ lost mid-attempt on its last attempt never reaches decision 1's check:
 rather than rescuing it, so nothing is delivered, and a cap makes that
 last attempt come sooner. The code this Amendment describes arrives in the same
 change as the Amendment, `sob-szd`.
+
+## Note (2026-09-27): the attempt-cap Amendment accepted, its code published in 0.16.0
+
+The 2026-09-26 Amendment above is accepted by `sob-0r1`, on the
+operator's word: the code that implements it is `375768a` (`sob-szd`),
+carried by the release 0.16.0, tagged `v0.16.0` at `d81ccf4` and
+published on Hex. Every claim was read at `d81ccf4`. Between `375768a`
+and that tag, one commit touches `lib/` - a moduledoc sentence in
+`lib/statifier_oban/telemetry.ex` - and none touches `test/` or any
+function cited below. The head Status line and the ADR index row
+already read accepted and are unchanged.
+
+- The `use` option: `__using__/1` reads `:max_attempts` from the `use`
+  options and passes it to `__max_attempts__!/2` while the handler
+  compiles; `nil` stays `nil`, a positive integer is kept, and anything
+  else raises `ArgumentError`, failing the compile
+  (`lib/statifier_oban/invoke/handler.ex`). No callback reads the cap,
+  and the enqueue's error set is unchanged.
+- The cap rides on the job: `put_max_attempts/2` puts the declared cap
+  into the options of `Worker.new/2` in the private `enqueue/4`, and adds
+  nothing when the handler declared none or does not export
+  `__statifier_oban_max_attempts__/0`, which only the `use` defines.
+  The invoke worker's `use Oban.Worker` sets no `max_attempts`, so such a
+  job keeps Oban's default of 20 (`lib/statifier_oban/invoke/worker.ex`).
+  The cap is read when the job is inserted, so a changed cap applies to
+  jobs enqueued after it.
+- Decision 1 is unchanged: `maybe_fail/7` still guards on
+  `attempt >= max_attempts` and delivers `attempts: attempt`, so under a
+  cap of 1 the first failing attempt delivers with `"attempts" => 1`
+  (`lib/statifier_oban/invoke/worker.ex`; the acceptance test "a handler
+  capped at one attempt is attempted once and parks the execution" in
+  `test/statifier_oban/invoke/handler_test.exs`). The failure classes and
+  the event name are the ones decisions 1 and 3 already name.
+- Consequences: the Oban release in `mix.lock` at `d81ccf4` documents
+  `Oban.Plugins.Lifeline` marking an executing job with no attempts left
+  `discarded` rather than `available`, so the at-most-once caveat stands
+  as written; the 0.16.0 CHANGELOG entry names the option and says a
+  handler that declares no cap keeps Oban's default.
