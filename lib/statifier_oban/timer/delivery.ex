@@ -82,16 +82,21 @@ defmodule StatifierOban.Timer.Delivery do
 
   The retry is bounded. The timer worker sets no `max_attempts`, so
   Oban's default of 20 applies, and Oban's default backoff spreads those
-  attempts over about twelve days. A park that outlasts them ends the
+  attempts over twelve to thirteen and a half days: the wait after
+  attempt `n` is `15 + 2^n` seconds plus a random 0-10% jitter, which
+  sums over the 19 retries to about 12.1 days with no jitter and about
+  13.4 with the most. A park that outlasts them ends the
   job `discarded` by Oban - an exhausted job, not a spec 6.2 discard: no
   `{:discarded, reason}` is recorded and no
   `[:statifier_oban, :timer, :discarded]` event is emitted - and the
   timer does not fire on its own after the execution is unparked. A host
   whose parks can run that long revives the exhausted job with
   `Oban.retry_job/2` after the unpark, before Oban's pruner removes the
-  row. Scheduling the same effect again does not revive it: the
-  discarded row still holds the timer's dedup guard
-  (`StatifierOban.Timer.Worker`), so the insert is a no-op.
+  row. While that row survives, scheduling the same effect again does
+  not revive it: the discarded row still holds the timer's dedup guard
+  (`StatifierOban.Timer.Worker`), so the insert is a no-op. Once the
+  pruner has removed the row the guard goes with it, and scheduling the
+  same effect again inserts a fresh job.
 
   ## Restoring the caller's trace context
 

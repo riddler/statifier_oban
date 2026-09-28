@@ -40,7 +40,15 @@ defmodule StatifierOban.ParkedStoreDelivery do
     Agent.update(__MODULE__, &put_in(&1, [:executions, scope], status))
   end
 
-  @doc "Puts a parked execution back to `:active`, as `unpark/3` does."
+  @doc """
+  Puts a parked execution back to `:active`, as `statifier_persistence`'s
+  `unpark/3` does for a parked one.
+
+  Only a parked scope is accepted: any other scope fails a match inside
+  the store, and the call exits, failing the calling test. `unpark/3` instead answers an `:active`
+  execution unchanged and a terminal one `{:discarded, execution}`; the
+  stand-in is stricter so a test that unparks the wrong scope fails.
+  """
   @spec unpark(String.t()) :: :ok
   def unpark(scope) do
     Agent.update(__MODULE__, fn state ->
