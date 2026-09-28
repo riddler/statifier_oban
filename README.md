@@ -786,13 +786,16 @@ attempt after the unpark delivers the event. A delivery that maps this error to
 `{:discarded, _}` cancels the job, and the execution comes back from the park
 with its timer gone. The retries are bounded: the timer worker sets no
 `max_attempts`, so Oban's default of 20 applies, spread by Oban's default
-backoff over about twelve days. A park that outlasts them ends the job
-`discarded` by Oban, and the timer does not fire on its own after the unpark; a
-host whose parks can run that long revives the job with `Oban.retry_job/2`
-after the unpark, before Oban's pruner removes the row. Scheduling the same
-effect again does not revive it, because the discarded row still holds the
-timer's dedup guard. The `StatifierOban.Timer.Delivery` moduledoc states the
-same rule.
+backoff over twelve to thirteen and a half days (the wait after attempt `n` is
+`15 + 2^n` seconds plus a random 0-10% jitter: about 12.1 days over the 19
+retries with no jitter, about 13.4 with the most). A park that outlasts them
+ends the job `discarded` by Oban, and the timer does not fire on its own after
+the unpark; a host whose parks can run that long revives the job with
+`Oban.retry_job/2` after the unpark, before Oban's pruner removes the row. While
+that row survives, scheduling the same effect again does not revive it, because
+the discarded row still holds the timer's dedup guard; once the pruner has
+removed the row, scheduling the same effect again inserts a fresh job. The
+`StatifierOban.Timer.Delivery` moduledoc states the same rule.
 
 The one config line that selects it is the `:delivery` seam:
 
