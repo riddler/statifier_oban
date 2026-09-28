@@ -170,6 +170,16 @@ defmodule StatifierOban.Invoke.Handler do
   the ones already stored. Leaving the option out adds nothing to the
   job, which keeps the default exactly.
 
+  Write the options as a literal keyword list in the `use` itself. The
+  `use` reads them as they are written, while the handler compiles, so
+  an argument that only holds a keyword list - a module attribute, a
+  variable, a function call - is ignored whole and declares no cap, and
+  so is any argument that is not a keyword list. `max_attempts: nil`
+  declares no cap either. The one key read is `:max_attempts`: any
+  other key, a misspelling of it included, is ignored. None of these is
+  an error: the handler compiles and its jobs keep the invoke worker's
+  default.
+
   The cap moves the terminal attempt and nothing else. The permanent
   failure above is still delivered, on the capped attempt: with
   `max_attempts: 1` a `run/1` returning `{:error, reason}` is attempted

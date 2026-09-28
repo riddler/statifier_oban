@@ -851,6 +851,40 @@ defmodule StatifierOban.Invoke.HandlerTest do
     end
   end
 
+  # The `use` reads its options only as a keyword list written in the
+  # `use` itself, and reads only `:max_attempts` from it (sob-qmb; the
+  # moduledoc's "Capping a handler's attempts"). A misspelled key compiles
+  # clean and caps nothing.
+  #
+  # sabotage: `__using__/1` read the first value of any keyword list
+  # instead of `:max_attempts` - went red (the misspelled key capped the
+  # handler at 1), reverted.
+  test "an unknown key in the use options compiles clean and stores no cap" do
+    handler = compile_handler!("use StatifierOban.Invoke.Handler, max_atempts: 1")
+
+    assert handler.__statifier_oban_max_attempts__() == nil
+    assert stored_max_attempts(handler, "inv_unknown_key") == 20
+  end
+
+  # A keyword list reaching the `use` through a module attribute or a
+  # variable is not a literal keyword list, so the whole argument is
+  # ignored: the cap inside it is dropped, not applied.
+  #
+  # sabotage: `__using__/1` evaluated a non-keyword argument in the
+  # module body and read `:max_attempts` from it - went red (the attribute
+  # arm capped the handler at 1), reverted.
+  test "use options that are not a literal keyword list compile and store no cap" do
+    for use_line <- [
+          "@handler_opts [max_attempts: 1]\n  use StatifierOban.Invoke.Handler, @handler_opts",
+          "handler_opts = [max_attempts: 1]\n  use StatifierOban.Invoke.Handler, handler_opts"
+        ] do
+      handler = compile_handler!(use_line)
+
+      assert handler.__statifier_oban_max_attempts__() == nil, use_line
+      assert stored_max_attempts(handler, "inv_non_literal") == 20, use_line
+    end
+  end
+
   # sabotage: `__before_compile__/1`'s check was short-circuited to never
   # raise - went red (the run-less module compiled clean), reverted.
   test "a use-ing module defining neither run arity fails to compile, naming both" do
@@ -880,6 +914,40 @@ defmodule StatifierOban.Invoke.HandlerTest do
   end
 
   defp unique, do: :erlang.unique_integer([:positive])
+
+  # Compiles a handler module whose `use` line is `use_line`, capturing
+  # the compiler's unused-attribute and unused-variable warnings (the
+  # `use` ignores a non-literal argument, so nothing reads it).
+  defp compile_handler!(use_line) do
+    source = """
+    defmodule StatifierOban.Invoke.HandlerTest.OptionsHandler#{unique()} do
+      #{use_line}
+
+      @impl StatifierOban.Invoke.Handler
+      def config, do: StatifierOban.TestInvokeHandler.config()
+
+      @impl StatifierOban.Invoke.Handler
+      def run(_invoke), do: {:ok, %{}}
+    end
+    """
+
+    ExUnit.CaptureIO.capture_io(:stderr, fn ->
+      send(self(), {:compiled, Code.compile_string(source)})
+    end)
+
+    assert_received {:compiled, [{handler, _binary}]}
+    handler
+  end
+
+  # Enqueues one start for `handler` under a fresh scope and returns the
+  # stored job's max_attempts.
+  defp stored_max_attempts(handler, invoke_id) do
+    scope = "sess_invoke_options_#{unique()}"
+
+    assert :ok = Handler.perform(handler, {:start, invoke_fixture(invoke_id)}, ctx_for(scope))
+    assert [%Oban.Job{max_attempts: max_attempts}] = stored_jobs(scope, invoke_id)
+    max_attempts
+  end
 
   defp machine do
     {:ok, machine} = Statifier.compile(@chart)
