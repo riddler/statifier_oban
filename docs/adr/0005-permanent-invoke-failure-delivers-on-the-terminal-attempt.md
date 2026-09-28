@@ -640,3 +640,37 @@ already read accepted and are unchanged.
   `discarded` rather than `available`, so the at-most-once caveat stands
   as written; the 0.16.0 CHANGELOG entry names the option and says a
   handler that declares no cap keeps Oban's default.
+
+## Note (2026-09-27): the attempt-cap Amendment's "no new function" means the failure-delivery surface
+
+The 2026-09-26 Amendment above ends its decision with "No new event
+name, failure class, function or error family is created." Read
+literally, that is broader than the change: `375768a` (`sob-szd`) does
+add functions. The sentence is about the failure-delivery surface this
+record decides, and is read here as: no new event name, failure class,
+delivery door or error family is created. Every claim below was read
+at `af9653a`, where `lib/statifier_oban/invoke/handler.ex` is as
+`375768a` left it. This Note decides nothing and changes no Status.
+
+- What the change added. The compile-time check
+  `__max_attempts__!/2`, a public `@doc false` function
+  (`lib/statifier_oban/invoke/handler.ex`); the enqueue helper
+  `put_max_attempts/2`, private to the same module; and
+  `__statifier_oban_max_attempts__/0`, a `@doc false` function that
+  `__using__/1` defines in every module that uses
+  `StatifierOban.Invoke.Handler`. None of them delivers anything: the
+  failure still reaches the chart only through `maybe_fail/7`
+  (`lib/statifier_oban/invoke/worker.ex`), with the event name and the
+  failure classes decisions 1 and 3 name, and the enqueue's error set
+  is unchanged.
+- What an explicit `nil` does. The Amendment's "a positive integer is
+  checked then, and anything else fails the compile" is also broader
+  than the code. `__using__/1` reads the option only when the `use`
+  argument is a keyword list, and `__max_attempts__!/2` passes `nil`
+  through, so `use StatifierOban.Invoke.Handler, max_attempts: nil`,
+  and a `use` whose argument is not a keyword list, both compile clean
+  and declare no cap: `__statifier_oban_max_attempts__/0` returns
+  `nil`, and `put_max_attempts/2` adds nothing to the job, which keeps
+  the invoke worker's default exactly as a handler that declared no
+  option does. Anything else that is not a positive integer still
+  raises `ArgumentError` while the handler compiles.
