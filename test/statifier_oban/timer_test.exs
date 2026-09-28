@@ -12,6 +12,20 @@ defmodule StatifierOban.TimerTest do
 
   @oban_name StatifierOban.TimerTestOban
 
+  # A delivery that reports every fired send to the test process, so a
+  # test can tell a fire that delivered from one that never reached the
+  # seam.
+  defmodule RecordingDelivery do
+    @moduledoc false
+    @behaviour StatifierOban.Timer.Delivery
+
+    @impl StatifierOban.Timer.Delivery
+    def deliver(scope, %SendDelayed{} = effect) do
+      send(:timer_test_listener, {:delivered, scope, effect.send_id})
+      :delivered
+    end
+  end
+
   setup context do
     # The session runtime backs the default delivery's liveness check: a
     # fired job here has no session under its scope, so it discards
@@ -256,6 +270,86 @@ defmodule StatifierOban.TimerTest do
     # The late cancel matches nothing: terminal states are past cancelling.
     assert {:ok, 0} = Timer.cancel(config, scope_a, cancel_fixture())
     assert %Oban.Job{state: ^terminal_state} = TestRepo.get!(Oban.Job, id)
+  end
+
+  # -- st-ADR-0074: the fire time and the stale fire -----------------------
+  #
+  # Decision 1: the absolute fire time is computed once, when the send is
+  # first handed over, and a re-arm reads it back rather than re-deriving
+  # it from `delay_ms`. The restart round trip pins the same thing across
+  # a full restart ("schedule days out -> restart -> fire").
+
+  # sabotage: `schedule/3` passed `replace: [scheduled: [:scheduled_at]]`
+  # to `Worker.new/2` - went red (the replay moved the stored fire time),
+  # reverted.
+  test "a re-armed send keeps the fire time its first insert computed",
+       %{config: config, scope_a: scope_a} do
+    # A library hold: the patron has an hour to collect the copy.
+    hold = %{
+      send_delayed_fixture()
+      | event: "hold.pickup_expired",
+        send_id: "pickup_window",
+        delay_ms: 3_600_000
+    }
+
+    assert {:ok, %Oban.Job{id: id, conflict?: false}} = Timer.schedule(config, scope_a, hold)
+    %Oban.Job{scheduled_at: fire_at} = TestRepo.get!(Oban.Job, id)
+
+    # The same send handed over again, as a resumed drive re-arming it,
+    # but with a different delay: the dedup key is the same, so the row
+    # is the same, and the fire time it was given at insert stands.
+    rearmed = %{hold | delay_ms: 2 * hold.delay_ms}
+
+    assert {:ok, %Oban.Job{id: ^id, conflict?: true}} = Timer.schedule(config, scope_a, rearmed)
+    assert %Oban.Job{state: "scheduled", scheduled_at: ^fire_at} = TestRepo.get!(Oban.Job, id)
+  end
+
+  # Decision 3: a fire claims the pending row before it delivers, so a
+  # cancel that landed first leaves nothing to fire. Oban's fetch moving
+  # the row to `executing` is the claim, and `cancel/3` only reaches the
+  # pending states; the self-cancel test pins the `executing` half, the
+  # racing test above the terminal half.
+
+  # sabotage: `cancel/3` skipped `Oban.cancel_all_jobs/2` and answered
+  # `{:ok, 1}` - went red (the cancelled pickup window delivered on the
+  # drain), reverted.
+  test "a cancelled send never delivers: the drain after the cancel fires only the other send",
+       %{queue: queue, scope_a: scope_a} do
+    Process.register(self(), :timer_test_listener)
+
+    {:ok, config} =
+      Config.new(oban: @oban_name, timers_queue: queue, delivery: RecordingDelivery)
+
+    # The patron collected the copy, so the pickup window is cancelled;
+    # the loan's due-date reminder under the same execution still fires.
+    pickup = %{
+      send_delayed_fixture()
+      | event: "hold.pickup_expired",
+        send_id: "pickup_window",
+        delay_ms: 0
+    }
+
+    reminder = %{
+      pickup
+      | event: "loan.due_soon",
+        send_id: "due_reminder",
+        ordinal: pickup.ordinal + 1
+    }
+
+    assert {:ok, %Oban.Job{id: pickup_id}} = Timer.schedule(config, scope_a, pickup)
+    assert {:ok, %Oban.Job{id: reminder_id}} = Timer.schedule(config, scope_a, reminder)
+
+    assert {:ok, 1} =
+             Timer.cancel(config, scope_a, %{cancel_fixture() | send_id: "pickup_window"})
+
+    assert %{success: 1, cancelled: 0, discard: 0, failure: 0} =
+             Oban.drain_queue(@oban_name, queue: queue, with_scheduled: true)
+
+    assert_received {:delivered, ^scope_a, "due_reminder"}
+    refute_received {:delivered, _, "pickup_window"}
+
+    assert %Oban.Job{state: "cancelled"} = TestRepo.get!(Oban.Job, pickup_id)
+    assert %Oban.Job{state: "completed"} = TestRepo.get!(Oban.Job, reminder_id)
   end
 
   # sabotage: `schedule/3` passed `nil` instead of `config.opaque_codec`
