@@ -11,6 +11,7 @@
 | [0007](0007-fan-out-child-starts-are-batched.md) | Fan-out child starts are batched, and the concurrency bound is the runtime's | accepted |
 | [0008](0008-timer-pin-source-over-an-optional-persistence-dependency.md) | The timer pin source ships here, over an optional dependency on statifier_persistence | accepted |
 | [0009](0009-deferred-completion.md) | Deferred completion: a handler may hand its work on and be answered later | accepted |
+| [0010](0010-a-timer-delivery-may-answer-a-snooze.md) | A timer delivery may answer a snooze, so a parked timer spends no retries | proposed |
 
 New ADRs: next number, same three-section format (Context, Decision,
 Consequences). Pick the number against a freshly fetched remote. A bare
