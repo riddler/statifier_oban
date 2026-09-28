@@ -24,6 +24,19 @@ defmodule StatifierOban.Timer do
     scheduled, so the fire time is computed at insert
     (`DateTime.utc_now/0` plus the delay), never re-derived later.
 
+  A host re-arming delayed sends after a persisted resume has two of
+  st-ADR-0074's decisions met here. Decision 1, the absolute fire time
+  computed once when the send is first handed over, is the job's
+  `scheduled_at`: `schedule/3` computes it at insert, and a re-arm of the
+  same send conflicts with the stored row on the dedup key and leaves
+  that fire time where it was. Decision 3's claim at fire time is Oban's
+  fetch moving the row out of the pending states into `executing`:
+  `cancel/3` reaches only the pending states, so a cancel that landed
+  first leaves nothing to fire, and one that lands after the claim
+  matches nothing and loses the race, the loss spec 6.3 allows. The
+  liveness check that follows the claim is the delivery module's, as
+  above.
+
   The config's `:opaque_codec` is fixed at schedule time: `schedule/3`
   reads it once, from the `Config` the caller hands it, and encodes the
   effect's host-opaque fields through it before the job is ever stored.
