@@ -507,6 +507,7 @@ defmodule StatifierOban.Invoke.Handler do
   # own default exactly as before the option existed.
   @spec put_max_attempts(keyword(), module()) :: keyword()
   defp put_max_attempts(opts, handler) do
+    # function_exported?/3 never loads a module; perform_start/3's handler.config() has loaded it.
     if function_exported?(handler, :__statifier_oban_max_attempts__, 0) do
       case handler.__statifier_oban_max_attempts__() do
         nil -> opts

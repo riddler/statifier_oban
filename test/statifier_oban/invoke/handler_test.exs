@@ -91,6 +91,19 @@ defmodule StatifierOban.Invoke.HandlerTest do
     def run(%Invoke{}), do: {:ok, %{}}
   end
 
+  # A handler implementing the behaviour without the `use`: it declares
+  # no attempt cap, because it has no `use` option to declare one with.
+  defmodule BehaviourOnlyHandler do
+    @moduledoc false
+    @behaviour StatifierOban.Invoke.Handler
+
+    @impl StatifierOban.Invoke.Handler
+    def config, do: StatifierOban.TestInvokeHandler.config()
+
+    @impl StatifierOban.Invoke.Handler
+    def run(%Invoke{}), do: {:ok, %{}}
+  end
+
   # The acceptance handler for the run-time bound (sob-eh8): a config
   # bounding every attempt at one second, and work that takes two.
   defmodule OverrunningHandler do
@@ -788,6 +801,29 @@ defmodule StatifierOban.Invoke.HandlerTest do
              )
 
     assert [%Oban.Job{max_attempts: max_attempts}] = stored_jobs(scope, "inv_uncapped")
+    assert max_attempts == 20
+  end
+
+  # A module implementing the behaviour without the `use` has no
+  # `__statifier_oban_max_attempts__/0`, so `put_max_attempts/2` takes its
+  # else-arm and the job keeps the invoke worker's default.
+  #
+  # sabotage: `put_max_attempts/2`'s else-arm put `max_attempts: 1` -
+  # went red (the behaviour-only handler's job carried 1), reverted.
+  test "a handler implementing the behaviour without the use stores the default max_attempts" do
+    scope = "sess_invoke_behaviour_only_#{unique()}"
+
+    assert Code.ensure_loaded?(BehaviourOnlyHandler)
+    refute function_exported?(BehaviourOnlyHandler, :__statifier_oban_max_attempts__, 0)
+
+    assert :ok =
+             Handler.perform(
+               BehaviourOnlyHandler,
+               {:start, invoke_fixture("inv_behaviour_only")},
+               ctx_for(scope)
+             )
+
+    assert [%Oban.Job{max_attempts: max_attempts}] = stored_jobs(scope, "inv_behaviour_only")
     assert max_attempts == 20
   end
 
