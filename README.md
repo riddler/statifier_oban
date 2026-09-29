@@ -34,7 +34,7 @@ Oban instead.
 ```elixir
 def deps do
   [
-    {:statifier_oban, "~> 0.16.0"}
+    {:statifier_oban, "~> 0.17.0"}
   ]
 end
 ```
