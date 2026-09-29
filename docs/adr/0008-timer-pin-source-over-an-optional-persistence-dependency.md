@@ -260,3 +260,17 @@ only" holds at that SHA; `statifier_persistence`'s `main` now also turns
 a throw or an exit into a refusal (`lib/statifier_persistence/pin_source.ex`,
 `defp ask`, `84c25ea`), which the record already said nothing here
 depends on.
+
+## Note (2026-09-28): the lock moved, the requirements did not
+
+The accepted-note bullet "Consequences: both README sections name the
+optional edge" reads `mix.lock` as carrying `statifier` 2.7.0 and
+`statifier_persistence` 0.13.0. That held at `eb47942` and at `89adadd`.
+Since `839eac8`, which tests a parked timer against the real store, the
+lock resolves `statifier_persistence` 0.21.0, `statifier` 2.9.0 and, as a
+dependency of `statifier`, `predicator` 9.4.2. The requirements in
+`mix.exs` are unchanged: `{:statifier_persistence, "~> 0.13", optional:
+true}` (`defp deps`) and `{:statifier, "~> 2.5"}` (`statifier_dep/0`).
+The lock is what this package's own gate and tests build against; a host
+resolves its own versions inside those requirements. This Note decides
+nothing and changes no decision above.
