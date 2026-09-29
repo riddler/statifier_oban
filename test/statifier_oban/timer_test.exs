@@ -307,8 +307,12 @@ defmodule StatifierOban.TimerTest do
   # Decision 3: a fire claims the pending row before it delivers, so a
   # cancel that landed first leaves nothing to fire. Oban's fetch moving
   # the row to `executing` is the claim, and `cancel/3` only reaches the
-  # pending states; the self-cancel test pins the `executing` half, the
-  # racing test above the terminal half.
+  # pending states. Two tests pin the `executing` half: "a delivery that
+  # cancels its own send_id is not killed by it" in
+  # test/statifier_oban/timer/self_cancel_test.exs (against a live queue)
+  # and "an executing timer is not cancelled: it has already fired" in
+  # test/statifier_oban/timer/cancellable_states_test.exs (the query
+  # alone). The racing test above pins the terminal half.
 
   # sabotage: `cancel/3` skipped `Oban.cancel_all_jobs/2` and answered
   # `{:ok, 1}` - went red (the cancelled pickup window delivered on the
