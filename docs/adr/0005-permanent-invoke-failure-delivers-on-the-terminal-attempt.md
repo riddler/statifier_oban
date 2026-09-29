@@ -674,3 +674,44 @@ at `af9653a`, where `lib/statifier_oban/invoke/handler.ex` is as
   the invoke worker's default exactly as a handler that declared no
   option does. Anything else that is not a positive integer still
   raises `ArgumentError` while the handler compiles.
+
+## Note (2026-09-28): the run-time-bound Note's "no new function" means the failure-delivery surface
+
+The 2026-09-24 Note above ("a timed-out attempt fails inside the
+worker") says "**No new failure class, event name, function or error
+family is created**". Read literally, that is broader than the change:
+`sob-eh8` (`a7c6673`, then `fdc73a7`) does add functions. The sentence
+is about the failure-delivery surface this record decides, and is read
+here as: no new failure class, event name, delivery door or error family
+is created on the delivery path. Every claim below was read at
+`e6bed65`. This Note decides nothing and changes no Status.
+
+- What the change added. A public `timeout/1` on each of the three
+  workers, each overriding the `Oban.Worker` default that answers
+  `:infinity` in the Oban release `mix.lock` pins: on
+  `StatifierOban.Invoke.Worker` it answers the job's bound plus the
+  backstop margin (`timeout/1` in `lib/statifier_oban/invoke/worker.ex`),
+  and on `StatifierOban.Invoke.ChildStartWorker` and
+  `StatifierOban.Timer.Worker` it answers the bound itself (`timeout/1`
+  in `lib/statifier_oban/invoke/child_start_worker.ex` and in
+  `lib/statifier_oban/timer/worker.ex`). The helpers for the job's
+  run-time bound live in `StatifierOban.JobTimeout`, a `@moduledoc false`
+  module whose functions are all `@doc false`: `put/2` writes a finite
+  bound into the job's meta, `bound/1` reads it back,
+  `backstop_margin_ms/0` holds the invoke worker's margin, and
+  `max_bound/1` holds the largest bound each job kind accepts
+  (`lib/statifier_oban/job_timeout.ex`). The private functions added are
+  `call_bounded/4` and `capture/1` in the invoke worker, and
+  `fetch_timeout/2` and `timeout_kind/1` in
+  `lib/statifier_oban/config.ex`.
+- What none of them does. None of them delivers anything: a timed-out
+  terminal invoke attempt still reaches the chart only through
+  `maybe_fail/7` (`lib/statifier_oban/invoke/worker.ex`), with the
+  `"run_crashed"` class decision 3 names and the event name
+  `error.communication.invoke.<invoke_id>` the 2026-09-24 Note gives.
+  `Oban.TimeoutError` is Oban's own exception, raised by
+  `call_bounded/4` so the attempt ends the way decision 3 already covers.
+  A bound `StatifierOban.Config.new/1` refuses is answered with the
+  `{:invalid_option, key, value}` shape the config already answers for an
+  invalid value of its other options (`fetch_timeout/2` in
+  `lib/statifier_oban/config.ex`).
