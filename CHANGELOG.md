@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries for unreleased work are not written here directly. Each issue drops a
-fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.16.0/changelog.d/README.md); the fragments are assembled
+fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.0/changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
+
+## [0.17.0] 2026-09-28
+
+### Added
+
+- A `StatifierOban.Timer.Delivery` implementation may answer `deliver/2` with `{:snooze, seconds}` (`seconds` a positive integer): the timer job is rescheduled at least `seconds` later without spending a retry and stays a pending, cancellable timer, so a delivery can hold the timer of an execution a chart migration parked instead of raising; any other snooze-shaped answer raises and retries as before.
 
 ## [0.16.0] 2026-09-26
 
