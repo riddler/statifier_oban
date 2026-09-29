@@ -205,10 +205,11 @@ this recipe makes:
   still unauthorized **always**: "publishing is the operator's, in every
   campaign". Its "Release preps" paragraph says the same of a docs
   republish: no consent or relay delegates it.
-- *a version bump on a release bead's branch* - allowed only on "an
-  operator-authorized release bead, inside a campaign carrying the operator's
-  explicit consent", and still unauthorized "on any other bead, on main, or
-  when the operator has not named this repo's release bead".
+- *a version bump on a release bead's branch* - allowed on "a release bead
+  the operator has named (in the campaign plan or their own words); the bump
+  is release prep, the family norm, and no campaign consent has to name it",
+  and still unauthorized "on any other bead, on main, or when the operator
+  has not named this repo's release bead".
 
 The tag is not reserved to the operator. The table's *tagging a release
 prep* row allows it once "the release bead's version bump is merged to
@@ -223,9 +224,8 @@ The push and the request are not reserved to the operator either. The
 table's *`git push`, `gh pr create`* row makes them an agent's inside a
 campaign carrying the operator's explicit consent, once the terminology
 scan is clean over the full outbound content - the same gate
-`.claude/wurk/mr.md` describes, and the same consent the version-bump row
-above needs. They are simply not this recipe's to perform: `/wurk:mr`
-performs them afterwards, under that row.
+`.claude/wurk/mr.md` describes. They are simply not this recipe's to
+perform: `/wurk:mr` performs them afterwards, under that row.
 
 (This section put all four - tag, push, request and publish - on the
 operator's side of the line, "in every campaign and outside every
@@ -240,7 +240,7 @@ paragraph, recorded 2026-09-25; this section kept the old wording until
 it was brought into line with them.)
 
 So the one thing this recipe performs - the bump plus the step B promotion, on
-a named release bead's branch, under a campaign consent that names it - is
-release *prep*. `.claude/wurk/commit.md`'s "Version bump: never" section
-records the same boundary from the commit side: the version field moves only
-through a release bead, never as a convenience.
+the branch of a release bead the operator has named - is release *prep*.
+`.claude/wurk/commit.md`'s "Version bump: never" section records the same
+boundary from the commit side: the version field moves only through a
+release bead, never as a convenience.
