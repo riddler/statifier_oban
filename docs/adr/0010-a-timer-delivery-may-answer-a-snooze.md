@@ -1,6 +1,6 @@
 # ADR-0010: A timer delivery may answer a snooze, so a parked timer spends no retries
 
-Status: proposed (2026-09-27, sob-46l)
+Status: accepted (2026-09-27, sob-46l)
 
 ## Context
 
@@ -171,3 +171,58 @@ nothing and changes no Status.
   `changelog.d/sob-46l.md`). The record stays proposed, as the same
   Consequences bullet says, until that code ships in a published
   version, and flips then.
+
+## Note (2026-09-29): accepted, the code shipped in 0.17.0
+
+The code that implements this record is `05d461f` (`sob-46l`), carried by
+the published release 0.17.0 (tag `v0.17.0`, `cab60c5`). The status line
+at the top flips in place from proposed to accepted, and the ADR index
+row with it; no other line of the record changes. Every claim was read at
+`cab60c5`, which is both the tag and `main` at the time of the flip, with
+Oban at the 2.23.1 that `mix.lock` resolves.
+
+- Decision 1: `t:StatifierOban.Timer.Delivery.snooze/0` is
+  `{:snooze, pos_integer()}`, beside `t:StatifierOban.Timer.Delivery.discard_reason/0`,
+  and the return type of `c:StatifierOban.Timer.Delivery.deliver/2`
+  carries it (`lib/statifier_oban/timer/delivery.ex`).
+- Decision 2: `StatifierOban.Timer.Worker.perform/1`
+  (`lib/statifier_oban/timer/worker.ex`) answers `{:snooze, seconds}` for
+  a positive integer `seconds`, unchanged. In Oban 2.23.1,
+  `Oban.Engines.Basic.snooze_job/3` sets the row `scheduled` at
+  `seconds` from now and raises `max_attempts` by one, and
+  `Oban.Engines.Lite` delegates `snooze_job/3` to it.
+- Decision 3: `StatifierOban.Timer.Delivery.Session.deliver/2` answers
+  only `:delivered` or `{:discarded, reason}`; no clause of it snoozes.
+- Decision 4: `StatifierOban.Timer.cancel/3` and
+  `StatifierOban.Timer.pending_for/2` both work over the pending states,
+  `scheduled` among them, and `StatifierOban.Timer.Worker`'s uniqueness
+  is still every job state over an infinite period on the `scope` and
+  `ordinal` keys.
+- Decision 5: `StatifierOban.Telemetry` defines no snooze event; the
+  `:snooze` clause of `StatifierOban.Timer.Worker.perform/1` emits
+  nothing, and `Oban.Queue.Executor.emit_event/1` reports a `:snoozed`
+  run on `[:oban, :job, :stop]`. The `attempt` measurement of
+  `[:statifier_oban, :timer, :fired]` and
+  `[:statifier_oban, :timer, :discarded]` is the job's `attempt`
+  (`StatifierOban.Telemetry.timer_fired/4`, `timer_discarded/5`).
+- Decision 6: the snooze clause's guard is `is_integer(seconds) and
+  seconds > 0`; any other answer matches no clause of the worker's
+  `case` and raises.
+- Decision 7: nothing under `lib/` counts or caps snoozes.
+- The Consequences: the `StatifierOban.Timer.Delivery` moduledoc section
+  "A parked execution retries; it is never discarded" and the README's
+  "Delivering timers to a durable execution" teach the snooze in their
+  `{:error, {:needs_migration, _execution}}` arm and keep the raise for
+  environment failures; the sentence "an Oban snooze is not available
+  from inside it" is gone from `lib/` and the README;
+  `test/statifier_oban/timer/parked_execution_test.exs` carries "a timer
+  firing into a parked execution snoozes with its retries intact, then
+  delivers after the unpark"; and the 0.17.0 section of `CHANGELOG.md`,
+  a minor release, names the new answer.
+
+The Context's statements anchored at `835ad52` describe the seam before
+this record's code and stay true of that commit. The Context's last
+paragraph and the last Consequences bullet, which say the code follows
+once the record is accepted, are superseded by the Note of 2026-09-28
+above: the code shipped at proposed, and the same bullet's "stays
+proposed until that code ships in a published version" is met by 0.17.0.
