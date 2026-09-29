@@ -140,3 +140,34 @@ gives up on is finished, and then it discards).
   delivery reschedules the job with its retries intact, the moduledoc and the
   README - follows this record once it is accepted, and the record stays
   proposed until that code ships in a published version.
+
+## Note (2026-09-28): the retry window as the code documents it, and the code landed at proposed
+
+Two statements above are read here against the code that landed for
+this record. Every claim below was read at `05d461f`. This Note decides
+nothing and changes no Status.
+
+- The retry window. The Context says Oban's default backoff spreads the
+  timer job's retries "over about twelve days". The
+  `StatifierOban.Timer.Delivery` moduledoc section "A parked execution
+  retries; it is never discarded" (`lib/statifier_oban/timer/delivery.ex`)
+  now gives the range: with no `max_attempts` set on the timer worker,
+  Oban's default of 20 attempts spreads over **twelve to thirteen and a
+  half days**, since the wait after attempt `n` is `15 + 2^n` seconds
+  plus a random 0-10% jitter, which sums over the 19 retries to about
+  12.1 days with no jitter and about 13.4 with the most. "About twelve
+  days" is the no-jitter floor of that range. The README's "Delivering
+  timers to a durable execution" gives the same range.
+- The code landed while this record is at proposed. The Context's last
+  paragraph and the last Consequences bullet say the code follows this
+  record "once the record is accepted" and "once it is accepted". The
+  operator ruled on 2026-09-28 that the code ships while the record is
+  at proposed, and it has: `05d461f` adds the `{:snooze, seconds}` arm to
+  `c:StatifierOban.Timer.Delivery.deliver/2` with `t:StatifierOban.Timer.Delivery.snooze/0`,
+  the clause in `StatifierOban.Timer.Worker.perform/1`
+  (`lib/statifier_oban/timer/worker.ex`), the tests, the moduledoc and
+  the README. That code is not yet in a published version (`mix.exs`
+  reads `@version "0.16.0"`, and the change waits in
+  `changelog.d/sob-46l.md`). The record stays proposed, as the same
+  Consequences bullet says, until that code ships in a published
+  version, and flips then.
