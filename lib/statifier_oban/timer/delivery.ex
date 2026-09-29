@@ -69,18 +69,31 @@ defmodule StatifierOban.Timer.Delivery do
   finished execution, and a timer firing into it is **retried, never
   discarded**.
 
-  The retry is a raise out of `c:deliver/2`. The callback answers
-  `:delivered` or `{:discarded, reason}` and nothing else, so a raise is
-  the one retry the seam admits; an Oban snooze is not available from
-  inside it. The job goes `retryable` under Oban's backoff, still counts
-  as a pending timer for the execution's scope
-  (`StatifierOban.Timer.pending_for/2`), and the first attempt after the
-  execution is unparked delivers the event. Mapping the refusal to
-  `{:discarded, _}` instead cancels the job for good: the execution
-  comes back from the park with its timer gone and nothing on it to say
-  so.
+  The retry is a snooze or a raise out of `c:deliver/2`, and the snooze
+  is the one to reach for. A delivery that answers `{:snooze, seconds}`
+  (`t:snooze/0`) has the job rescheduled: the row goes `scheduled` at
+  least `seconds` from now, still counts as a pending timer for the
+  execution's scope (`StatifierOban.Timer.pending_for/2`), is still
+  reached by a spec 6.3 cancel (`StatifierOban.Timer.cancel/3`), and the
+  first run after the execution is unparked delivers the event. A snooze
+  spends no retry: the attempts the job has left, `max_attempts` minus
+  `attempt`, are the same after the snooze as before the run that
+  answered it (how Oban keeps that number whole varies by Oban version;
+  ADR-0010 decision 2). A delivery that raises instead is retried too,
+  at the cost of an attempt: the job goes `retryable` under Oban's
+  backoff, is still a pending timer, and the first attempt after the
+  unpark delivers. Mapping the refusal to `{:discarded, _}` cancels the
+  job for good: the execution comes back from the park with its timer
+  gone and nothing on it to say so.
 
-  The retry is bounded. The timer worker sets no `max_attempts`, so
+  The bound on a snooze is the host's: this package counts no snoozes
+  and caps none, so a delivery that snoozes for as long as its execution
+  stays parked keeps the timer pending for as long as the park lasts,
+  and a host that wants a ceiling keeps its own. The period is a trade:
+  a short one re-reads the store often while the park lasts, a long one
+  delays the event after the unpark by up to the period.
+
+  A raise's retry is bounded. The timer worker sets no `max_attempts`, so
   Oban's default of 20 applies, and Oban's default backoff spreads those
   attempts over twelve to thirteen and a half days: the wait after
   attempt `n` is `15 + 2^n` seconds plus a random 0-10% jitter, which
@@ -137,6 +150,17 @@ defmodule StatifierOban.Timer.Delivery do
   """
   @type discard_reason :: term()
 
+  @typedoc """
+  Ask again later: the execution is not finished but cannot take the
+  event now, so the timer job is rescheduled at least `seconds` from now
+  without spending a retry (ADR-0010).
+
+  `seconds` is a positive integer. Zero, a negative count and Oban's
+  period tuples are not this answer: the timer worker matches none of
+  them, so each raises and retries as any unrecognised answer does.
+  """
+  @type snooze :: {:snooze, pos_integer()}
+
   @doc """
   Establishes that the execution named by `scope` is still live and, only
   then, feeds the fired event back into it.
@@ -147,14 +171,21 @@ defmodule StatifierOban.Timer.Delivery do
   (`:done` and friends) still discards, because an event fed to a halted
   session just sits queued.
 
-  A failure that is neither of those - the host's execution store
+  May return `{:snooze, seconds}` (`t:snooze/0`) when the execution is
+  neither live nor finished - parked by a chart migration, for example -
+  and takes events again later: the job is rescheduled at least
+  `seconds` from now, spends no retry, and stays a pending timer. The
+  answer is optional; the default `StatifierOban.Timer.Delivery.Session`
+  never gives it.
+
+  A failure that is none of those - the host's execution store
   unreachable, for example - should raise (or exit) rather than return:
   the job is retried by Oban, which is the correct response to an
   environment fact, where a discard is the correct response to an
   execution fact.
   """
   @callback deliver(scope :: String.t(), effect :: SendDelayed.t()) ::
-              :delivered | {:discarded, discard_reason()}
+              :delivered | {:discarded, discard_reason()} | snooze()
 
   @doc """
   Builds the external event a fired timer job feeds back, from the scope

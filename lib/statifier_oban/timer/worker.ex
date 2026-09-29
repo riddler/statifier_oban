@@ -30,6 +30,12 @@ defmodule StatifierOban.Timer.Worker do
   - delivered -> the job completes (`:ok`);
   - the execution is not live -> the job cancels with
     `{:discarded, reason}` recorded, the spec 6.2 discard as data;
+  - the execution is not finished but cannot take the event now -> the
+    delivery answers `{:snooze, seconds}`, `seconds` a positive integer,
+    and the job snoozes: Oban reschedules it at least `seconds` later
+    without spending a retry, and it stays a pending timer (ADR-0010).
+    A snooze-shaped answer that is not that - zero, a negative count,
+    an Oban period tuple - matches no clause and retries like a raise;
   - an undecodable row cancels with `{:undecodable, reason}` - no number
     of retries makes a corrupt row decodable;
   - a codec named on the row that this node cannot resolve, or one that
@@ -87,6 +93,13 @@ defmodule StatifierOban.Timer.Worker do
         {:discarded, reason} ->
           Telemetry.timer_discarded(scope, effect, delivery, reason, job)
           {:cancel, {:discarded, reason}}
+
+        # ADR-0010: handed to Oban unchanged, and nothing emitted - Oban's
+        # own job event reports the snoozed run. The guard is this seam's:
+        # Oban also takes zero and period tuples, which fall through here
+        # and raise as any unrecognised answer does.
+        {:snooze, seconds} when is_integer(seconds) and seconds > 0 ->
+          {:snooze, seconds}
       end
     end
   end

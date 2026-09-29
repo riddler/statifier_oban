@@ -11,7 +11,10 @@ defmodule StatifierOban.ParkedStoreDelivery do
   `{:discarded, %{status: status}}`, an unknown one is
   `{:error, :execution_not_found}`, and a parked one is
   `{:error, {:needs_migration, execution}}`. `deliver/2` maps them with
-  the README module's arms, so the needs_migration arm raises.
+  the README module's arms. The needs_migration arm answers what
+  `answer_parked_with/1` last set: the README's `{:snooze, seconds}`, any
+  other term as given, or `:raise` (the default) to raise as a delivery
+  that does not snooze does.
 
   Test-only. A delivered event is reported to the pid `start_link/1` was
   handed, because the delivery behaviour hands an implementation only
@@ -31,7 +34,20 @@ defmodule StatifierOban.ParkedStoreDelivery do
   @doc "Starts the store, reporting deliveries to `test_pid`."
   @spec start_link(pid()) :: Agent.on_start()
   def start_link(test_pid) when is_pid(test_pid) do
-    Agent.start_link(fn -> %{test_pid: test_pid, executions: %{}} end, name: __MODULE__)
+    Agent.start_link(
+      fn -> %{test_pid: test_pid, executions: %{}, parked_answer: :raise} end,
+      name: __MODULE__
+    )
+  end
+
+  @doc """
+  Sets what `deliver/2` answers for a parked execution: `:raise` raises,
+  any other term is returned as the answer, unchecked, so a test can hand
+  the timer worker an answer it must refuse.
+  """
+  @spec answer_parked_with(:raise | term()) :: :ok
+  def answer_parked_with(answer) do
+    Agent.update(__MODULE__, &Map.put(&1, :parked_answer, answer))
   end
 
   @doc "Stores `scope` with `status`."
@@ -72,10 +88,18 @@ defmodule StatifierOban.ParkedStoreDelivery do
         {:discarded, :terminated}
 
       {:error, {:needs_migration, _execution}} ->
-        raise "#{execution_id} is parked; retrying the timer"
+        parked(execution_id)
 
       {:error, reason} ->
         raise "stepping #{execution_id} failed: #{inspect(reason)}"
+    end
+  end
+
+  @spec parked(String.t()) :: term()
+  defp parked(execution_id) do
+    case Agent.get(__MODULE__, & &1.parked_answer) do
+      :raise -> raise "#{execution_id} is parked; retrying the timer"
+      answer -> answer
     end
   end
 

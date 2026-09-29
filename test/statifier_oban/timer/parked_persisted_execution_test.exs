@@ -1,8 +1,9 @@
 defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
   # A timer firing into an execution parked in statifier_persistence's own
-  # store, delivered through the README's durable module: the refusal from
-  # `StatifierPersistence.Executions.step/5` raises, the job stays
-  # retryable, and the attempt after `unpark/3` delivers. The stand-in test
+  # store, delivered through the README's durable module with the raise a
+  # delivery that does not snooze puts in its needs_migration arm: the
+  # refusal from `StatifierPersistence.Executions.step/5` raises, the job
+  # stays retryable, and the attempt after `unpark/3` delivers. The stand-in test
   # beside this one (parked_execution_test.exs) carries the same
   # assertions against a store double.
   #
@@ -30,7 +31,8 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
   defmodule PersistedDelivery do
     @moduledoc false
     # The README's "Delivering timers to a durable execution" module, over
-    # a `StatifierPersistence.Storage.InMemory` store the test hands it.
+    # a `StatifierPersistence.Storage.InMemory` store the test hands it,
+    # with the raise in its needs_migration arm where the README snoozes.
     # A delivered event is reported to the test pid, with the machine
     # state `step/5` answered.
     @behaviour StatifierOban.Timer.Delivery
