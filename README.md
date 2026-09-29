@@ -666,10 +666,17 @@ end
 ```
 
 Every job the handler enqueues carries the cap as its `max_attempts`. The
-value must be a positive integer, and anything else fails the handler's
-compile. A handler that declares no cap adds nothing to its jobs, so they
-keep the default. Like the run-time bounds, the cap is fixed when the job
-is enqueued: changing it affects later jobs, not stored ones.
+value must be a positive integer, and any other value fails the handler's
+compile, except `max_attempts: nil`, which declares no cap. Write the
+options as a literal keyword list in the `use` itself: the `use` reads
+them as written while the handler compiles, so a keyword list reaching it
+through a module attribute, a variable or a function call is ignored
+whole and declares no cap, as is any argument that is not a keyword list.
+The one key read is `:max_attempts`; any other key, a misspelling of it
+included, is ignored. None of these is an error. A handler that declares
+no cap adds nothing to its jobs, so they keep the default. Like the
+run-time bounds, the cap is fixed when the job is enqueued: changing it
+affects later jobs, not stored ones.
 
 The permanent-failure delivery follows the cap. With `max_attempts: 1`, a
 `run/1` returning `{:error, reason}` is attempted once, and that attempt

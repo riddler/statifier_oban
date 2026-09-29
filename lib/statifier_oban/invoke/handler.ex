@@ -164,9 +164,10 @@ defmodule StatifierOban.Invoke.Handler do
       end
 
   The value is a positive integer, checked when the handler compiles;
-  anything else fails the compile. It is written onto every job the
-  handler enqueues as that job's `max_attempts`, so it is fixed at
-  enqueue time: changing it changes the jobs enqueued afterwards, not
+  any other value fails the compile, except in the cases the next
+  paragraph lists, none of which is an error. It is written onto every
+  job the handler enqueues as that job's `max_attempts`, so it is fixed
+  at enqueue time: changing it changes the jobs enqueued afterwards, not
   the ones already stored. Leaving the option out adds nothing to the
   job, which keeps the default exactly.
 
