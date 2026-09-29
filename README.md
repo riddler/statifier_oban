@@ -751,9 +751,10 @@ defmodule MyApp.DurableTimerDelivery do
 
       {:error, {:needs_migration, _execution}} ->
         # Parked by a chart migration: not finished, and it takes events
-        # again once unparked. Raise so the job retries; a discard here
-        # cancels the timer for good.
-        raise "#{execution_id} is parked; retrying the timer"
+        # again once unparked. Snooze so the job asks again in five
+        # minutes without spending a retry; a discard here cancels the
+        # timer for good.
+        {:snooze, 300}
 
       {:error, reason} ->
         # What remains leaves this execution's liveness unanswered - an
@@ -781,10 +782,24 @@ identity on a timer job - hence `machine_for!/1`.
 own, because it is the easiest to mistake for a discard. `step/5` answers it
 for an execution a chart migration parked: the execution is not finished, and
 it takes events again once it is unparked. A timer firing into it is retried,
-never discarded - the arm raises, the job goes `retryable`, and the first
-attempt after the unpark delivers the event. A delivery that maps this error to
-`{:discarded, _}` cancels the job, and the execution comes back from the park
-with its timer gone. The retries are bounded: the timer worker sets no
+never discarded - the arm answers `{:snooze, 300}`, the job is rescheduled at
+least that many seconds later, and the first run after the unpark delivers the
+event. A snooze spends no retry: the attempts the job has left, `max_attempts`
+minus `attempt`, are the same after it as before, so the timer waits out a park
+of any length. The snoozed job is still a pending timer
+(`StatifierOban.Timer.pending_for/2`) and a cancel of its send id still reaches
+it (`StatifierOban.Timer.cancel/3`). The period is the host's trade: a short
+one re-reads the store often while the park lasts, a long one delays the event
+after the unpark by up to the period. This package counts no snoozes and caps
+none; a host that wants a ceiling keeps its own. `seconds` must be a positive
+integer: zero, a negative count or an Oban period tuple is not a snooze, and it
+raises and retries like any other unrecognised answer. A delivery that maps
+this error to `{:discarded, _}` cancels the job, and the execution comes back
+from the park with its timer gone.
+
+A delivery may raise here instead, as it does for the errors below: the job
+goes `retryable`, and the first attempt after the unpark delivers. That retry
+spends an attempt, and the retries are bounded: the timer worker sets no
 `max_attempts`, so Oban's default of 20 applies, spread by Oban's default
 backoff over twelve to thirteen and a half days (the wait after attempt `n` is
 `15 + 2^n` seconds plus a random 0-10% jitter: about 12.1 days over the 19
