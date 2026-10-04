@@ -197,14 +197,15 @@ The skill does not tag, push, open a request or publish, and this extension
 does not either: this recipe stops at the release commit. What it leaves
 undone splits three ways.
 
-The publish is the operator's, in every campaign and outside every
-campaign. `CLAUDE.md`'s authority table is explicit on it, and on the bump
-this recipe makes:
+An agent or a session never runs `mix hex.publish`: the release workflow
+publishes on the tag push, and a failed workflow is re-run from its Actions
+page, never worked round by a local publish. `CLAUDE.md`'s authority table
+is explicit on it, and on the bump this recipe makes:
 
-- *a release (`mix hex.publish`, GitHub release)* - trigger **never**,
-  still unauthorized **always**: "publishing is the operator's, in every
-  campaign". Its "Release preps" paragraph says the same of a docs
-  republish: no consent or relay delegates it.
+- *a release (`mix hex.publish`, GitHub release)* - trigger **never** for
+  an agent or a session, still unauthorized **always**: the release workflow
+  publishes on the tag push the tagging row already allows. Its "Release
+  preps" paragraph says the same of a docs republish.
 - *a version bump on a release bead's branch* - allowed on "a release bead
   the operator has named (in the campaign plan or their own words); the bump
   is release prep, the family norm, and no campaign consent has to name it",

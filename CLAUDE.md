@@ -56,9 +56,9 @@ irreversible step, and report.
 | merging a campaign PR | a campaign consent the operator adopted verbatim that names automatic merges, with every named condition met (full gate green, CI green, firewall scan clean with a positive control, any named review gate passed) | outside such a consent; any named condition unmet; any PR the consent's carve-outs hold for the operator |
 | `bd close <id>` | never for a mirrored bead whose other half is not merged to its own repo's `origin/main`; a mirrored bead whose other half has ALSO landed may be closed by the campaign conductor under a consent naming this exception, both halves together, each verified against its remote; otherwise the operator's call | for a bead whose description carries a `mirrors:` line while its other half is unlanded, campaign consent included |
 | `bd dolt push` | bead state changed locally **and** the git side of the same change has already reached `origin`; inside a campaign, the conductor pushes (atomically across the campaign's trackers) | as a way to publish beads for work that is not on `origin/main` yet |
-| a version bump on a release bead's branch | a release bead the operator has named (in the campaign plan or their own words); the bump is release prep, the family norm, and no campaign consent has to name it - its tag follows the tagging row once the prep is merged to `origin/main`, and the publish stays the operator's | on any other bead, on main, or when the operator has not named this repo's release bead |
+| a version bump on a release bead's branch | a release bead the operator has named (in the campaign plan or their own words); the bump is release prep, the family norm, and no campaign consent has to name it - its tag follows the tagging row once the prep is merged to `origin/main`, and the release workflow publishes on that tag push; an agent or a session never runs the publish | on any other bead, on main, or when the operator has not named this repo's release bead |
 | tagging a release prep | the release bead's version bump is merged to `origin/main`; the tag names that version at the merged commit | before the bump is on `origin/main`; a tag naming any other version or commit |
-| a release (`mix hex.publish`, GitHub release) | never | always - publishing is the operator's, in every campaign |
+| a release (`mix hex.publish`, GitHub release) | never - an agent or a session never runs `mix hex.publish`; the release workflow (`.github/workflows/release.yml`) publishes on the tag push the tagging row already allows; a failed workflow is re-run from its Actions page, never worked round by a local publish | always, for an agent or a session; a GitHub release stays the operator's |
 
 The organizing principle is the same one the other packages use: the human gate
 belongs where an action stops being reversible. A commit on a per-bead branch
@@ -99,11 +99,12 @@ the operator has named (in the campaign plan or their own words), the prep -
 the version bump and the changelog promotion - lands through the rows above;
 once it is merged to `origin/main`, the conductor or the session that owns
 the release bead tags that merged commit with the new version and pushes the
-tag. Publishing (`mix hex.publish`, a docs republish included) is the
-operator's one release step, in every campaign, and no consent or relay
-delegates it. Merging the prep follows this file's merge row, and nothing
+tag. An agent or a session never runs `mix hex.publish` (a docs republish
+included): the release workflow publishes on that tag push, and a failed
+workflow is re-run from its Actions page, never worked round by a local
+publish. Merging the prep follows this file's merge row, and nothing
 else this file reserves for the operator changes. (Recorded 2026-09-25 by
-the operator.)
+the operator; the publish sentence ruled by the operator, 2026-10-04.)
 
 Widening this section is a decision for the operator to make and record here.
 An agent may draft the change; it does not adopt it.
