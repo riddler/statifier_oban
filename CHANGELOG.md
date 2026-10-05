@@ -6,9 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries for unreleased work are not written here directly. Each issue drops a
-fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.0/changelog.d/README.md); the fragments are assembled
+fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.1/changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
+
+## [0.17.1] 2026-10-05
+
+Documentation-only release: the README is rewritten as an introduction. No
+file under `lib/` changes.
+
+### Changed
+
+- The README opens as an introduction: what the package is, why it exists, the install line, one basic-usage snippet, a Documentation section that groups the docs by the reader's question, and the compatibility ranges.
+- The README's durable-timer and async-invoke examples are rewritten as a library loan (a loan that comes due, and an overdue fine assessed off the session); the subsection that walked the same two seams in a second domain is dropped.
+- Two README headings are renamed so their anchors agree on GitHub and on HexDocs: "Bounding a job's run time" is now "Bounding how long an attempt takes", and "Capping a handler's attempts" is now "Capping handler attempts".
 
 ## [0.17.0] 2026-09-28
 
