@@ -36,7 +36,9 @@
       "test_pattern": "\\b(?:test|property)\\s+\"",
       "exempt_prefixes": []
     },
-    "project_level_skips": [],
+    "project_level_skips": [
+      "^opt-in; set (diataxis): \\[enabled: :auto\\] in \\.quality\\.exs$"
+    ],
     "not_applicable_skips": [
       "^:doctor not installed$",
       "^:gettext not installed$",

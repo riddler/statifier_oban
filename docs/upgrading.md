@@ -88,7 +88,7 @@ May start doing:
   largest bound you configure**; for invoke jobs that is the bound plus the
   5-second margin.
 
-The README's "Bounding a job's run time" section and the
+The README's "Bounding how long an attempt takes" section and the
 `StatifierOban.Config` documentation carry the detail.
 
 ### Parking an invoke job whose handler is missing
