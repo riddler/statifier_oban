@@ -6,28 +6,23 @@
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/statifier_oban/)
 [![License](https://img.shields.io/hexpm/l/statifier_oban.svg)](https://github.com/riddler/statifier_oban/blob/main/LICENSE)
 
-> **Pre-1.0.** Until `statifier_oban` reaches v1.0, its public surface may change
-> between minor releases, sometimes drastically: a release may rename modules,
-> callbacks, table columns, telemetry events or error vocabulary with no
-> compatibility shim. Every such change is recorded in
-> [CHANGELOG.md](CHANGELOG.md) under a bold **Breaking** heading that says what
-> to do about it. Pinning to an exact minor - `~> X.Y.0` - is the recommended way
-> to consume the package until 1.0. What a host changes for each minor from 0.11
-> on is on one page:
-> [`docs/upgrading.md`](https://github.com/riddler/statifier_oban/blob/main/docs/upgrading.md).
+StatifierOban runs a [Statifier](https://github.com/riddler/statifier-ex)
+chart's delayed sends and async invokes as [Oban](https://github.com/oban-bg/oban)
+jobs in your own database. A loan that comes due in three weeks is one job row
+that a deploy in between does not drop, and an invoke's work runs on an Oban
+queue and answers the chart when it is done.
 
-Durable timers and async invoke execution for
-[Statifier](https://github.com/riddler/statifier-ex), backed by
-[Oban](https://github.com/oban-bg/oban).
+## Why: a chart's timers outlive the node
 
-Statifier's session runs delayed sends on `Process.send_after/3`, so every
-in-flight timer dies with the node: a deploy silently drops every pending
-delayed send. Charts with human-timescale delays - a signup wizard's
-abandonment follow-up, a card authorization's settlement window, escalations
-and timeouts measured in hours or days - need the timers to outlive the
-process.
-This package consumes Statifier's effect vocabulary and schedules that work in
-Oban instead.
+Statifier's session arms a delayed send with `Process.send_after/3`, so a
+pending timer lives in one process on one node: a deploy or a crash drops it
+without a trace, and a chart whose delays are measured in days - a loan due in
+three weeks, a hold that expires on the shelf - cannot count on its timer ever
+firing. With this package the chart's `SendDelayed` and `Cancel` effects become
+rows in the host's own Oban table, so the timer fires on whichever node is
+running when it comes due, a drive executed twice stores one timer rather than
+two, and invoke work gets Oban's retries, with a permanent failure delivered to
+the chart as an event rather than leaving it waiting.
 
 ## Installation
 
@@ -38,6 +33,86 @@ def deps do
   ]
 end
 ```
+
+The host owns the Oban instance and runs Oban's own migration; this package
+starts no instance and ships no migration.
+
+## Basic usage
+
+```elixir
+# The loan chart's `<send id="due" event="loan.due" delay="21d"/>` arrives as a
+# SendDelayed effect, and returning the copy early (`<cancel sendid="due"/>`)
+# arrives as a Cancel. This subscriber hands both to Oban.
+defmodule MyApp.LoanTimers do
+  use GenServer
+
+  alias Statifier.Effect.{Cancel, SendDelayed}
+  alias StatifierOban.Timer
+
+  def start_link(session), do: GenServer.start_link(__MODULE__, session)
+
+  @impl GenServer
+  def init(session) do
+    {:ok, config} = StatifierOban.Config.new(oban: MyApp.Oban, timers_queue: :loan_timers)
+    :ok = Statifier.Session.subscribe(session, self())
+    {:ok, %{config: config, scope: Statifier.Session.session_id(session)}}
+  end
+
+  @impl GenServer
+  def handle_info(
+        {:statifier, _id, {:effect, {:send_delayed, %SendDelayed{target: nil} = e}}},
+        s
+      ) do
+    {:ok, _job} = Timer.schedule(s.config, s.scope, e)
+    {:noreply, s}
+  end
+
+  def handle_info({:statifier, _id, {:effect, {:cancel, %Cancel{} = e}}}, s) do
+    {:ok, _cancelled} = Timer.cancel(s.config, s.scope, e)
+    {:noreply, s}
+  end
+
+  # Anything else, a send routed elsewhere included, is the library's.
+  def handle_info(_other, s), do: {:noreply, s}
+end
+```
+
+## Documentation
+
+- Learn
+  - [A worked example](#a-worked-example) - a loan that comes due and an overdue fine assessed off the session, end to end: the chart, the timer subscriber and the invoke handler
+- Do
+  - [Fan out one invocation over N children](#fan-out-one-invocation-n-children) - return `{:fan_out, items}` from a handler and wire the child-start seam
+  - [Enqueue elsewhere, answer later](#enqueue-elsewhere-answer-later) - hand an invocation's work to another release and deliver its answer from there
+  - [Bound how long an attempt takes](#bounding-how-long-an-attempt-takes) - the three per-job-kind timeouts and what an attempt past its bound does
+  - [Park a job whose handler is missing](#parking-a-job-whose-handler-is-missing) - cancel and tell the chart at once instead of retrying to exhaustion
+  - [Cap a handler's attempts](#capping-handler-attempts) - `max_attempts` on the `use`, and how the failure delivery follows it
+  - [Deliver timers to a durable execution](#delivering-timers-to-a-durable-execution) - the delivery a process-less host writes, snoozing a parked execution included
+  - [Count pending timers as a chart pin source](#timers-as-a-chart-pin-source) - adopt the shipped pin source so a chart with a pending timer is not retired
+  - [Keep sensitive values off the job row](#sensitive-values-in-job-args) - pass ids rather than values, or configure an `:opaque_codec`
+  - [Upgrade a host](https://github.com/riddler/statifier_oban/blob/main/docs/upgrading.md) - what a host changes for each minor from 0.11 on
+- Look up
+  - [API reference](https://hexdocs.pm/statifier_oban/api-reference.html) - every module, callback and config option, from the moduledocs
+  - [Telemetry events](https://github.com/riddler/statifier_oban/blob/main/docs/telemetry.md#the-events) - every event with its measurements and metadata
+  - [Changelog](CHANGELOG.md) - what changed in each version, with a **Breaking** heading for what a host must do
+- Understand
+  - [The contract this package implements](#the-contract-this-package-implements) - the recipe and rules in statifier-ex that this package implements, and the routing limit they record
+  - [What a timer days out survives](https://github.com/riddler/statifier_oban/blob/main/docs/long-timers.md) - a restart, a paused queue, a leader change, and what it does not survive
+  - [Telemetry and the OpenTelemetry bridge half](https://github.com/riddler/statifier_oban/blob/main/docs/telemetry.md) - why these events exist, what is deliberately absent, and what the bridge builds on them
+  - [The decision records](https://github.com/riddler/statifier_oban/tree/main/docs/adr) - why the package is shaped as it is, one decision per record
+
+## Compatibility
+
+- Elixir `~> 1.18`.
+- Statifier `~> 2.5`, Oban `~> 2.19` and `telemetry ~> 1.3`;
+  `statifier_persistence ~> 0.13` is optional, and with it the timer pin
+  source is compiled.
+- Any Oban engine: the host's instance picks it, and this package never names
+  one.
+- Pre-1.0: a minor release may rename modules, callbacks, table columns,
+  telemetry events or error vocabulary with no compatibility shim. Each such
+  change is in the [CHANGELOG](CHANGELOG.md) under a **Breaking** heading that
+  says what to do, so pin an exact minor (`~> 0.17.0`) until 1.0.
 
 ## Status
 
@@ -62,7 +137,7 @@ side.
 
 Beyond this package's own suite, the shape is exercised downstream:
 [statifier_examples](https://github.com/riddler/statifier_examples), a public
-example application, runs an abandoned-signup reminder on `Oban.Engines.Lite`
+example application, runs a delayed reminder on `Oban.Engines.Lite`
 end to end - arming a delayed send, cancelling it, letting it fire, and
 delivering the fired event into an execution that is rebuilt from storage rather
 than held in a process - with no host-side workarounds. Nothing in that is
@@ -100,34 +175,35 @@ There is no default for any of the three: a missing one is a configuration
 error at the call site rather than a silent fall-back into whatever instance
 or queue happens to be running.
 
-### Durable timers: a card authorization's settlement window
+### Durable timers: a loan that comes due
 
-An authorization holds for seven days. If nothing captures it in that window
-it expires, and a capture before then has to take the timer back down. In
-SCXML that is one delayed send and one cancel:
+A copy of a book is lent to a patron for three weeks. If the copy is not
+returned in that window the loan comes due and goes overdue, and a return
+before then has to take the timer back down. In SCXML that is one delayed
+send and one cancel:
 
 ```xml
-<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="authorized">
-  <state id="authorized">
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="on_loan">
+  <state id="on_loan">
     <onentry>
-      <send id="hold" event="authorization.expired" delay="7d"/>
+      <send id="due" event="loan.due" delay="21d"/>
     </onentry>
     <onexit>
-      <cancel sendid="hold"/>
+      <cancel sendid="due"/>
     </onexit>
-    <transition event="capture.requested" target="capturing"/>
-    <transition event="authorization.expired" target="expired"/>
+    <transition event="copy.returned" target="returned"/>
+    <transition event="loan.due" target="overdue"/>
   </state>
-  <state id="capturing">
+  <state id="overdue">
     <!-- filled in by the invoke example below -->
-    <transition event="done.invoke.capture" target="settled"/>
+    <transition event="done.invoke.fine" target="fined"/>
   </state>
-  <final id="settled"/>
-  <final id="expired"/>
+  <final id="returned"/>
+  <final id="fined"/>
 </scxml>
 ```
 
-Left alone, `Statifier.Session` arms that seven-day delay with
+Left alone, `Statifier.Session` arms that three-week delay with
 `Process.send_after/3` and the next deploy drops it. To make it durable, read
 the two effects off the session's subscriber stream and hand them here:
 
@@ -177,26 +253,27 @@ end
 the effect's relative `delay_ms`, unique on `{scope, ordinal}`. That
 uniqueness is the load-bearing part: an at-least-once host that re-executes
 the same drive after a crash gets `{:ok, %Oban.Job{conflict?: true}}` and one
-stored job, not two authorizations expiring. When the job fires seven days
-later, `StatifierOban.Timer.Worker` feeds `authorization.expired` back into
+stored job, not two loans coming due. When the job fires three weeks
+later, `StatifierOban.Timer.Worker` feeds `loan.due` back into
 the execution through the delivery seam, behind a liveness check - an
 execution that terminated or halted in the meantime discards the event rather
 than receiving it.
 
 `Timer.cancel/3` matches on `{scope, send_id}` and returns `{:ok, count}`:
-`capture.requested` leaves `authorized`, the `<cancel sendid="hold"/>` becomes
+`copy.returned` leaves `on_loan`, the `<cancel sendid="due"/>` becomes
 a `Cancel` effect, and the stored job is cancelled. A cancel that matches
 nothing is `{:ok, 0}`, not an error - a real-time cancel is allowed to lose a
 race with a timer that already fired.
 
-### Async invoke: capturing the authorization off the session
+### Async invoke: assessing the overdue fine off the session
 
-The capture itself is a call to a payment processor: slow, retryable, and the
-one thing that must not happen twice. `use StatifierOban.Invoke.Handler` puts
-it in an Oban job and delivers completion back as `done.invoke.<invoke_id>`:
+The fine itself is a write into the library's accounts system: slow,
+retryable, and the one thing that must not happen twice. `use
+StatifierOban.Invoke.Handler` puts it in an Oban job and delivers completion
+back as `done.invoke.<invoke_id>`:
 
 ```elixir
-defmodule MyApp.CaptureHandler do
+defmodule MyApp.FineHandler do
   use StatifierOban.Invoke.Handler
 
   @impl StatifierOban.Invoke.Handler
@@ -205,26 +282,25 @@ defmodule MyApp.CaptureHandler do
   @impl StatifierOban.Invoke.Handler
   def run(invoke) do
     # `invoke.invoke_id` is the idempotency key upstream hands you, stable by
-    # construction across replays. `params` carries an id, not the card.
-    with {:ok, capture} <-
-           MyApp.Payments.capture_by_invoke_id(invoke.invoke_id, invoke.params) do
-      {:ok, %{"capture_id" => capture.id}}
+    # construction across replays. `params` carries the loan id, not the patron.
+    with {:ok, fine} <-
+           MyApp.Accounts.assess_fine_by_invoke_id(invoke.invoke_id, invoke.params) do
+      {:ok, %{"fine_id" => fine.id}}
     end
   end
 end
 ```
 
-Work that keys on the **execution** - provisioning tied to the workflow
-instance, a write into a per-execution table - defines `run/2` instead. The
-invoke effect names the invocation but not the execution it belongs to, so the
-second argument carries the execution's scope (and its `invoke_id`) from the
-job row:
+Work that keys on the **execution** - a write into a per-execution table, an
+entry in the loan's own history - defines `run/2` instead. The invoke effect
+names the invocation but not the execution it belongs to, so the second
+argument carries the execution's scope (and its `invoke_id`) from the job row:
 
 ```elixir
 @impl StatifierOban.Invoke.Handler
 def run(invoke, %{scope: scope}) do
-  with {:ok, record} <- MyApp.Provisioning.provision(scope, invoke.invoke_id) do
-    {:ok, %{"provision_id" => record.id}}
+  with {:ok, entry} <- MyApp.LoanHistory.record_fine(scope, invoke.invoke_id) do
+    {:ok, %{"entry_id" => entry.id}}
   end
 end
 ```
@@ -241,8 +317,8 @@ type:
 {:ok, session} =
   Statifier.Session.start_link(machine,
     invoke_handlers: %{
-      "myapp:authorize" => MyApp.AuthorizationHandler,
-      "myapp:capture" => MyApp.CaptureHandler
+      "myapp:fine" => MyApp.FineHandler,
+      "myapp:overdue_notice" => MyApp.OverdueNoticeHandler
     }
   )
 
@@ -250,14 +326,14 @@ type:
 ```
 
 ```xml
-<state id="capturing">
-  <invoke id="capture" type="myapp:capture"/>
-  <transition event="done.invoke.capture" target="settled"/>
-  <transition event="error.communication.invoke.capture" target="needs_attention"/>
+<state id="overdue">
+  <invoke id="fine" type="myapp:fine"/>
+  <transition event="done.invoke.fine" target="fined"/>
+  <transition event="error.communication.invoke.fine" target="needs_attention"/>
 </state>
 ```
 
-Entering `capturing` inserts one job into `:invoke_queue`, unique on
+Entering `overdue` inserts one job into `:invoke_queue`, unique on
 `{scope, invoke_id, macrostep}` (ADR-0003) - a replayed drive conflicts with
 the stored job, while a genuine re-entry of the state (a retry loop in the
 chart) gets a fresh one. Leaving the state before the job runs cancels it.
@@ -268,10 +344,10 @@ optional.
 The second transition is the other end of the same story. `run/1` returning
 `{:error, reason}` retries, as at-least-once work should - but when the
 retries run out, the job is discarded and
-`error.communication.invoke.capture` is delivered into the execution behind the
+`error.communication.invoke.fine` is delivered into the execution behind the
 same liveness check, carrying `%{"reason" => "run_failed", "attempts" => n,
-"detail" => text}`. Without it the chart would sit in `capturing` forever on
-a processor that never comes back; with it the execution parks in
+"detail" => text}`. Without it the chart would sit in `overdue` forever on
+an accounts system that never comes back; with it the execution parks in
 `needs_attention`, where an operator can see it. A chart that would rather
 catch every kind of communication failure at once transitions on the bare
 `error.communication` instead, and catches this too. See ADR-0005 and
@@ -313,22 +389,6 @@ it to every drive, the delivery seam's re-entry included; a map assembled only
 on the path that *starts* an execution is exactly the second-step failure
 above.
 
-### The same two seams in a signup wizard
-
-Nothing above is specific to card processing. A signup wizard with an A/B test
-across its variants uses the same two doors:
-
-- **Durable timer.** `<send id="nudge" event="signup.abandoned" delay="24h"/>`
-  on entry to a wizard step, `<cancel sendid="nudge"/>` on exit. The visitor
-  who leaves mid-wizard gets the follow-up a day later even though the node
-  that scheduled it was replaced by a deploy; the visitor who finishes the
-  step cancels it.
-- **Async invoke.** `<invoke type="myapp:signup">` with the step and the
-  assigned variant in `params`, so recording a conversion event happens off
-  the wizard's own progress. `invoke_id` keys the write, so a redelivery
-  records one conversion rather than two - which is the difference between an
-  A/B result and a fiction.
-
 ### Fan-out: one invocation, N children
 
 A `core.map`-shaped block is one invocation that becomes N child executions, one
@@ -353,9 +413,9 @@ defmodule MyApp.MapHandler do
   # position -
   # which is what the job's scope names.
   @impl StatifierOban.Invoke.Handler
-  def run(invoke, %{scope: parent_run_id}) do
+  def run(invoke, %{scope: parent_execution_id}) do
     with {:ok, path} <- items_path(invoke),
-         {:ok, machine_state} <- MyApp.Runs.machine_state(parent_run_id) do
+         {:ok, machine_state} <- MyApp.Executions.machine_state(parent_execution_id) do
       # Fan out over descriptors - ids, ranges - not over row payloads:
       # every start job reads this list again, and it lives in the
       # parent execution's datamodel for the execution's whole life.
@@ -413,9 +473,9 @@ job is at-least-once like every other job here:
 
 ```elixir
 @impl StatifierOban.Invoke.ChildStarter
-def start_child(parent_run_id, invoke, index, count, opts) do
+def start_child(parent_execution_id, invoke, index, count, opts) do
   StatifierPersistence.Driver.start_child_at(
-    MyApp.driver(), parent_run_id, invoke, index, count, opts
+    MyApp.driver(), parent_execution_id, invoke, index, count, opts
   )
   |> case do
     :ok -> :ok
@@ -441,7 +501,7 @@ passes it straight through to that package's
 
 ```elixir
 StatifierPersistence.Driver.start_child_at(
-  driver, parent_run_id, effect, index, count, policy: :all | :first_error
+  driver, parent_execution_id, effect, index, count, policy: :all | :first_error
 ) :: :ok | {:refused, term()}
 ```
 
@@ -563,7 +623,7 @@ polls, or times out on it. Two things a chart may want are already there:
   other release to stop is the host's to arrange. ADR-0009 records the
   whole shape.
 
-## Bounding a job's run time
+## Bounding how long an attempt takes
 
 By default no job this package enqueues has a run-time bound: an attempt
 runs until its work returns. Three options set one per job kind, each in
@@ -645,7 +705,7 @@ fixed at enqueue time, the same way the run-time bounds are: it travels
 in the job's meta, so a job stored before the option existed reads as
 `:retry`.
 
-## Capping a handler's attempts
+## Capping handler attempts
 
 An invoke job is attempted up to Oban's default of 20 times: the invoke
 worker sets no `max_attempts` of its own. A handler whose work should not
@@ -790,7 +850,7 @@ own, because it is the easiest to mistake for a discard. `step/5` answers it
 for an execution a chart migration parked: the execution is not finished, and
 it takes events again once it is unparked. A timer firing into it is retried,
 never discarded - the arm answers `{:snooze, 300}`, the job is rescheduled at
-least that many seconds later, and the first run after the unpark delivers the
+least that many seconds later, and the first attempt after the unpark delivers the
 event. A snooze spends no retry: the attempts the job has left, `max_attempts`
 minus `attempt`, are the same after it as before, so the timer waits out a park
 of any length. The snoozed job is still a pending timer
@@ -913,9 +973,9 @@ Two answers, and most hosts want the first:
    ever written to the job row, the row stays small and readable during an
    incident, and the value the handler acts on is the current one rather
    than one captured hours earlier - which matters when the delay is
-   measured in days. A `myapp:authorize` invoke would put an authorization
-   request id in `params` and let `run/1` load the record by that id,
-   rather than carrying the card details on the job;
+   measured in days. A `myapp:fine` invoke would put the loan id in
+   `params` and let `run/1` load the loan and its patron by that id,
+   rather than carrying the patron's name and address on the job;
    `StatifierOban.Invoke.Handler`'s moduledoc shows that `run/1` shape.
 2. **Configure `:opaque_codec`** when a value genuinely has to travel on
    the row. Implement `StatifierOban.OpaqueTerm.Codec` and name the module
