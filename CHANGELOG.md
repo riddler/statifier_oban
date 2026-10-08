@@ -6,9 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries for unreleased work are not written here directly. Each issue drops a
-fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.1/changelog.d/README.md); the fragments are assembled
+fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.2/changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
+
+## [0.17.2] 2026-10-08
+
+Documentation-only release: the upgrading page is published with the docs.
+No file under `lib/` changes.
+
+### Changed
+
+- The upgrading page, "Upgrading a host from 0.11 to 0.17", is now part of the HexDocs, in an "Upgrading" group. It carries a section per minor from 0.11 to 0.17, adding 0.14 to 0.15, 0.15 to 0.16 and 0.16 to 0.17, each saying what a host must change for that minor.
 
 ## [0.17.1] 2026-10-05
 
