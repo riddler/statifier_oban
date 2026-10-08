@@ -1,7 +1,8 @@
-# Upgrading a host from 0.11 to 0.14
+# Upgrading a host from 0.11 to 0.17
 
 This page says what a host changes to move `statifier_oban` from 0.11.0 to
-0.12.0, from 0.12.0 to 0.13.0, and from 0.13.0 to 0.14.0. A host
+0.17.1, one minor at a time: 0.11 to 0.12, 0.12 to 0.13, 0.13 to 0.14,
+0.14 to 0.15, 0.15 to 0.16 and 0.16 to 0.17. A host
 here is the code that embeds the package: the `StatifierOban.Config` it
 builds, the Oban instance and queues it runs the jobs on, its invoke
 handlers, any `StatifierOban.Timer.Delivery` or
@@ -11,7 +12,7 @@ handlers it attaches. What each release added is in
 about it, and says **NONE** where the answer is nothing.
 
 Move the pin with each minor, as the README recommends:
-`{:statifier_oban, "~> 0.14.0"}`. The `statifier` requirement (`~> 2.5`)
+`{:statifier_oban, "~> 0.17.0"}`. The `statifier` requirement (`~> 2.5`)
 and the `oban` requirement (`~> 2.19`) are the same on every step of this
 page. No step here adds a migration: the jobs are Oban's rows, in Oban's
 table.
@@ -64,8 +65,9 @@ integer of milliseconds or `:infinity`, and each defaults to `:infinity`,
 no bound, which is what every job had before. The largest accepted value is
 `4_294_967_295` for `:child_start_timeout` and `:timer_timeout`, the
 BEAM's largest timeout, and `4_294_962_295` for `:invoke_timeout`, which
-leaves room for the invoke worker's 5-second backstop; `Config.new/1`
-rejects a larger integer, zero, or anything else with
+leaves room for the invoke worker's 5-second backstop;
+`StatifierOban.Config.new/1` rejects a larger integer, zero, or anything
+else with
 `{:error, {:invalid_option, key, value}}`.
 
 Must change: **NONE**.
@@ -97,7 +99,7 @@ The README's "Bounding how long an attempt takes" section and the
 `:cancel`, and defaults to `:retry`. Under `:retry` an invoke job whose
 handler module does not resolve retries to exhaustion and delivers
 nothing, exactly as in 0.12.0. Any other value is rejected by
-`Config.new/1`.
+`StatifierOban.Config.new/1`.
 
 Must change: **NONE**.
 
@@ -159,11 +161,113 @@ May start doing:
   release to stop is the host's to arrange.
 
 The README's "Enqueue elsewhere, answer later" section and
-[ADR-0009](adr/0009-deferred-completion.md) carry the detail.
+[ADR-0009](https://github.com/riddler/statifier_oban/blob/main/docs/adr/0009-deferred-completion.md)
+carry the detail.
+
+## 0.14 to 0.15
+
+0.15.0 adds one telemetry event, `[:statifier_oban, :invoke, :deferred]`,
+emitted inside the invoke job when a handler's `run/1` or `run/2` answers
+`:deferred`, and only then. `StatifierOban.Telemetry.events/0` lists it, so
+the list grows from fourteen names to fifteen: the five
+`[:statifier_oban, :timer, kind]` names and ten
+`[:statifier_oban, :invoke, kind]` names.
+
+Must change: **NONE** for a host none of whose invoke handlers answers
+`:deferred`: the event is never emitted for it. Every other event keeps
+its name, measurements and metadata.
+
+- **If you attach one telemetry handler to every name in
+  `StatifierOban.Telemetry.events/0` and match on the event name with no
+  catch-all clause**, add a clause for `[:statifier_oban, :invoke,
+  :deferred]` before a handler of yours answers `:deferred`. Its
+  measurements are `system_time` and `attempt`, its metadata `scope`,
+  `invoke_id`, `macrostep`, `handler`, `delivery` and `job_id`. Without
+  the clause your telemetry handler raises on the event, and `:telemetry`
+  detaches a handler that raises, so it stops hearing every other event
+  as well.
+- **If you run `opentelemetry_statifier`'s Oban bridge**, 0.8.0 is the
+  first bridge that spans the new event. An older bridge attaches to its
+  own list of events, which does not name it, so a deferred invocation
+  gets no span there and nothing fails.
+
+The `StatifierOban.Telemetry` documentation and
+[telemetry.md](https://github.com/riddler/statifier_oban/blob/main/docs/telemetry.md)
+carry the detail.
+
+## 0.15 to 0.16
+
+0.16.0 adds one option to `use StatifierOban.Invoke.Handler`:
+`max_attempts:`. Must change: **NONE**. A handler that declares no cap
+enqueues its jobs exactly as in 0.15.0, with the invoke worker's own
+attempt count, Oban's default of 20.
+
+May start doing:
+
+- **Cap a handler whose work should not be repeated that often** with
+  `use StatifierOban.Invoke.Handler, max_attempts: n`, `n` a positive
+  integer. The permanent failure, `error.communication.invoke.<invoke_id>`,
+  is then delivered on the capped attempt, so a chart that handles
+  `error.communication` needs no new transition. The cap is written onto
+  each job when it is enqueued: jobs stored before the change keep the
+  count they were enqueued with.
+- **Write the option as a literal keyword list in the `use` itself.** Any
+  value but a positive integer fails the handler's compile. An argument
+  that only holds a keyword list (a module attribute, a variable, a
+  function call) is ignored whole and declares no cap, and so is a
+  misspelt key; neither is an error, so check the handler's jobs carry
+  the cap you meant.
+- **If you cap a handler whose work cannot be keyed on `invoke_id`, give
+  the chart its own deadline.** A node lost in the middle of the capped
+  attempt leaves the job to `Oban.Plugins.Lifeline`, which discards a job
+  with no attempts left without running it again and without delivering,
+  so the chart hears nothing from this package.
+
+The README's "Capping handler attempts" section and the
+`StatifierOban.Invoke.Handler` documentation carry the detail.
+
+## 0.16 to 0.17
+
+0.17.0 adds one answer to `deliver/2` on a
+`StatifierOban.Timer.Delivery` implementation: `{:snooze, seconds}`.
+0.17.1 is documentation only; its `lib/` is 0.17.0's, and a host changes
+nothing for it.
+
+Must change: **NONE**. A delivery that answers `:delivered` or
+`{:discarded, reason}`, or raises, means what it meant in 0.16.0, and the
+default `StatifierOban.Timer.Delivery.Session` never answers a snooze.
+`seconds` must be a positive integer: zero, a negative count and Oban's
+period tuples match no clause, so each raises and retries, as every
+snooze-shaped answer did in 0.16.0.
+
+May start doing:
+
+- **If your `Timer.Delivery` raises or discards on an execution parked by
+  a chart migration, answer `{:snooze, seconds}` there instead.** Such an
+  execution (`statifier_persistence`'s `step/5` answers
+  `{:error, {:needs_migration, execution}}`) is neither live nor finished.
+  A raise is retried, but each retry spends an attempt: the timer worker
+  sets no `max_attempts`, so a park that outlasts Oban's default of 20
+  attempts, twelve to thirteen and a half days under its default
+  backoff, ends the job discarded by Oban, and the timer does not fire
+  after the unpark. A
+  `{:discarded, _}` answer cancels the timer for good. A snooze
+  reschedules the job at least `seconds` later, spends no retry, and
+  leaves it a pending timer that `StatifierOban.Timer.cancel/3` still
+  reaches and `StatifierOban.Timer.pending_for/2` still counts.
+- **Choose the period, and keep your own ceiling if you want one.** This
+  package counts no snoozes and caps none, so a delivery that snoozes for
+  as long as the park lasts keeps the timer pending that long. A short
+  period re-reads your store often while the park lasts; a long one
+  delays the event after the unpark by up to the period.
+
+The README's "Delivering timers to a durable execution" section and the
+`StatifierOban.Timer.Delivery` documentation carry the detail.
 
 ## Timers days out
 
 Nothing on this page changes what a long timer needs from a host. A timer
 that waits days is one Oban job row for all of that time;
-[long-timers.md](long-timers.md) says what such a timer survives, what it
-does not, and the Oban settings a host must keep for that to hold.
+[long-timers.md](https://github.com/riddler/statifier_oban/blob/main/docs/long-timers.md)
+says what such a timer survives, what it does not, and the Oban settings
+a host must keep for that to hold.

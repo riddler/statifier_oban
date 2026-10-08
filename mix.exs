@@ -49,7 +49,11 @@ defmodule StatifierOban.MixProject do
       main: "readme",
       extras: [
         "README.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "docs/upgrading.md"
+      ],
+      groups_for_extras: [
+        Upgrading: ["docs/upgrading.md"]
       ],
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]

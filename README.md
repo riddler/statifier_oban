@@ -90,7 +90,7 @@ end
   - [Deliver timers to a durable execution](#delivering-timers-to-a-durable-execution) - the delivery a process-less host writes, snoozing a parked execution included
   - [Count pending timers as a chart pin source](#timers-as-a-chart-pin-source) - adopt the shipped pin source so a chart with a pending timer is not retired
   - [Keep sensitive values off the job row](#sensitive-values-in-job-args) - pass ids rather than values, or configure an `:opaque_codec`
-  - [Upgrade a host](https://github.com/riddler/statifier_oban/blob/main/docs/upgrading.md) - what a host changes for each minor from 0.11 on
+  - [Upgrade a host](https://github.com/riddler/statifier_oban/blob/main/docs/upgrading.md) - what a host changes for each minor from 0.11 to 0.17
 - Look up
   - [API reference](https://hexdocs.pm/statifier_oban/api-reference.html) - every module, callback and config option, from the moduledocs
   - [Telemetry events](https://github.com/riddler/statifier_oban/blob/main/docs/telemetry.md#the-events) - every event with its measurements and metadata
