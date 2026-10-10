@@ -1,6 +1,6 @@
 # ADR-0011: A version tag push publishes to Hex, through a release workflow
 
-Status: proposed (2026-10-04)
+Status: accepted (2026-10-10, statifier_oban 0.17.1)
 
 ## Context
 
@@ -112,3 +112,65 @@ workflow publishes is, for this repository, permanent.
   steps is made in `release.yml` in the same change.
 - This record stays proposed until a version of this package has been
   published through the workflow.
+
+## Note (2026-10-10): accepted, the workflow first published 0.17.1
+
+The first version of this package published through the release workflow
+is 0.17.1: tag `v0.17.1` at `97513dd`, workflow run
+https://github.com/riddler/statifier_oban/actions/runs/37310196157, every
+step of it green on its first attempt, the publish step included. The
+workflow has published once more since, also on its first attempt: 0.17.2,
+tag `v0.17.2` at `7e72408`, workflow run
+https://github.com/riddler/statifier_oban/actions/runs/37743115234. Hex
+and HexDocs both show 0.17.1 and 0.17.2. That first publish is the
+evidence that flips this record, ruled by the operator, 2026-10-06; the
+Status line names the first version so published (decided by the
+conductor under a standing consent, 2026-10-10). The status line at the
+top flips in place from proposed to accepted, and the ADR index row with
+it; no other line of the record changes. The last Consequences bullet,
+"This record stays proposed until a version of this package has been
+published through the workflow", is met by 0.17.1 and stays as written.
+
+Every claim was read at `7e72408`, which is both the `v0.17.2` tag and
+`main` on the day of the flip. Since `v0.17.1`, two commits have reached
+`main` (`3d02205`, the upgrading page, and `7e72408`, the 0.17.2 release
+prep); neither touches `.github/workflows/`, `CLAUDE.md` or
+`.claude/wurk/release.md`. In `mix.exs` the first adds a docs extra and
+the second moves `@version` to `0.17.2`, still the single attribute
+decision 2's version check reads.
+
+- Context: at `45a84cb` the authority table's release row read "never"
+  and "always - publishing is the operator's, in every campaign", and the
+  "Release preps" paragraph called the publish "the operator's one release
+  step"; `ci.yml` there had its "Full quality gate" step.
+- Decision 1: `.github/workflows/release.yml` triggers on `push` of tags
+  matching `v*.*.*` and on no other event; `permissions: contents: read`;
+  its concurrency group is `release-${{ github.ref }}` with
+  `cancel-in-progress: false`.
+- Decision 2: the steps "Check the tagged commit is on the default branch"
+  (the branch read from `github.event.repository.default_branch`, fetched,
+  then `git merge-base --is-ancestor`), "Check the tag names the version in
+  mix.exs" and "Check Hex does not already show this version" all run
+  before "Read the toolchain out of mise.toml".
+- Decision 3: the toolchain, cache, dependency fetch and "Full quality
+  gate" steps of `release.yml` match those of `ci.yml` line for line, and
+  the gate step reads `gate.full` from `.claude/wurk.json` (today `mix
+  quality`); nothing in the workflow reads CI's result.
+- Decision 4: the "Publish to Hex" step runs `mix hex.publish --yes` with
+  `HEX_API_KEY` from the secret of that name in that step's `env` alone; a
+  secret named `HEX_API_KEY` is an organisation secret available to this
+  repository (its name read, never its value); the last step prints the
+  hex.pm and HexDocs addresses.
+- Decision 5: the publish command carries no package-only flag, and
+  HexDocs serves the docs of both published versions.
+- Decision 6: the workflow has no retry or re-run step, and both runs
+  succeeded on attempt 1.
+- Decision 7 restates Hex's own replace and revert window, which nothing
+  in this repository changes.
+- The Consequences: `CLAUDE.md`'s version-bump row, release row and
+  "Release preps" paragraph, and `.claude/wurk/release.md`, between them
+  say an agent or a session never runs `mix hex.publish`, the workflow
+  publishes on the tag push, and a failed workflow is re-run from its
+  Actions page, never worked round by a local publish; each says the
+  first two, and the release row, the paragraph and `release.md` say the
+  third.
