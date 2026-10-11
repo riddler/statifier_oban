@@ -3,9 +3,12 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
   # store, delivered through the README's durable module with the raise a
   # delivery that does not snooze puts in its needs_migration arm: the
   # refusal from `StatifierPersistence.Executions.step/5` raises, the job
-  # stays retryable, and the attempt after `unpark/3` delivers. The stand-in test
-  # beside this one (parked_execution_test.exs) carries the same
-  # assertions against a store double.
+  # stays retryable, and the attempt after `unpark/3` delivers. A second
+  # case answers the README's `{:snooze, 300}` in that arm instead: the job
+  # is rescheduled with its retries intact, and the first run after the
+  # unpark delivers. The stand-in test beside this one
+  # (parked_execution_test.exs) carries the same assertions against a
+  # store double.
   #
   # Not async: shares the one SQLite repo and oban_jobs table (ADR-0002
   # harness) and the named delivery state.
@@ -31,10 +34,11 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
   defmodule PersistedDelivery do
     @moduledoc false
     # The README's "Delivering timers to a durable execution" module, over
-    # a `StatifierPersistence.Storage.InMemory` store the test hands it,
-    # with the raise in its needs_migration arm where the README snoozes.
-    # A delivered event is reported to the test pid, with the machine
-    # state `step/5` answered.
+    # a `StatifierPersistence.Storage.InMemory` store the test hands it.
+    # Its needs_migration arm raises unless the test hands it a
+    # `:parked_answer`, which it then answers instead, as the README's
+    # `{:snooze, 300}` does. A delivered event is reported to the test pid,
+    # with the machine state `step/5` answered.
     @behaviour StatifierOban.Timer.Delivery
 
     use Agent
@@ -49,7 +53,9 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
 
     @impl StatifierOban.Timer.Delivery
     def deliver(execution_id, %SendDelayed{} = effect) do
-      %{store: store, machine: machine, test_pid: test_pid} = Agent.get(__MODULE__, & &1)
+      %{store: store, machine: machine, test_pid: test_pid} =
+        state = Agent.get(__MODULE__, & &1)
+
       event = Delivery.fired_event(execution_id, effect)
 
       case Executions.step(store, execution_id, machine, event, executor: &execute/2) do
@@ -64,7 +70,10 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
           {:discarded, :terminated}
 
         {:error, {:needs_migration, _execution}} ->
-          raise "#{execution_id} is parked; retrying the timer"
+          case Map.get(state, :parked_answer) do
+            nil -> raise "#{execution_id} is parked; retrying the timer"
+            answer -> answer
+          end
 
         {:error, reason} ->
           raise "stepping #{execution_id} failed: #{inspect(reason)}"
@@ -82,7 +91,12 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
     {:ok, machine} = Statifier.compile(@loan_chart)
     {:ok, store} = Storage.new(Storage.InMemory, [])
 
-    start_supervised!({PersistedDelivery, %{store: store, machine: machine, test_pid: self()}})
+    delivery_state =
+      context
+      |> Map.take([:parked_answer])
+      |> Map.merge(%{store: store, machine: machine, test_pid: self()})
+
+    start_supervised!({PersistedDelivery, delivery_state})
 
     queue = "parked_persisted_test_#{context.line}"
 
@@ -134,6 +148,44 @@ defmodule StatifierOban.Timer.ParkedPersistedExecutionTest do
     assert_received {:persisted_delivered, ^scope, machine_state}
     assert MapSet.equal?(Statifier.active_leaf_states(machine_state), MapSet.new(["reminded"]))
     assert {:ok, %{status: :active}} = Storage.fetch_execution(store, scope)
+  end
+
+  # sabotage: removed the {:snooze, seconds} clause from perform/1 in
+  # StatifierOban.Timer.Worker - went red (failure: 1 instead of
+  # snoozed: 1: the answer raised and spent an attempt) - reverted.
+  @tag parked_answer: {:snooze, 300}
+  test "a timer firing into a parked execution snoozes with its retries intact, then delivers after the unpark",
+       %{config: config, queue: queue, store: store, machine: machine, scope: scope} do
+    assert {:ok, %Execution{status: :active}, _machine_state} =
+             Executions.create(store, scope, machine, executor: fn _effect, _context -> :ok end)
+
+    assert :ok = Storage.update_execution_status(store, scope, :needs_migration, failure: nil)
+
+    assert {:ok, %Oban.Job{id: id}} = Timer.schedule(config, scope, fired_fixture())
+
+    %Oban.Job{attempt: 0} = scheduled = TestRepo.get!(Oban.Job, id)
+    left = scheduled.max_attempts - scheduled.attempt
+    before_run = DateTime.utc_now()
+
+    assert %{snoozed: 1, failure: 0, cancelled: 0, discard: 0, success: 0} = drain(queue)
+
+    assert %Oban.Job{state: "scheduled", errors: [], scheduled_at: at} =
+             job = TestRepo.get!(Oban.Job, id)
+
+    assert job.max_attempts - job.attempt == left
+    assert DateTime.diff(at, before_run) >= 299
+    refute_received {:persisted_delivered, _, _}
+    assert {:ok, %{status: :needs_migration}} = Storage.fetch_execution(store, scope)
+
+    # Still a pending timer for the scope while it waits out the park.
+    assert %{^scope => 1} = Timer.pending_for(config, [scope])
+
+    assert {:ok, %Execution{status: :active}} = Executions.unpark(store, scope)
+
+    assert %{success: 1, snoozed: 0, failure: 0, cancelled: 0} = drain(queue)
+    assert %Oban.Job{state: "completed", errors: []} = TestRepo.get!(Oban.Job, id)
+    assert_received {:persisted_delivered, ^scope, machine_state}
+    assert MapSet.equal?(Statifier.active_leaf_states(machine_state), MapSet.new(["reminded"]))
   end
 
   defp drain(queue) do
