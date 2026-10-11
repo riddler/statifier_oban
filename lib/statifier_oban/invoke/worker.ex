@@ -193,7 +193,7 @@ defmodule StatifierOban.Invoke.Worker do
 
   @impl Oban.Worker
   def timeout(%Oban.Job{} = job) do
-    case JobTimeout.bound(job) do
+    case JobTimeout.bound(job, :invoke) do
       :infinity -> :infinity
       bound -> bound + @backstop_margin_ms
     end
@@ -501,7 +501,7 @@ defmodule StatifierOban.Invoke.Worker do
           | :deferred
           | {:error, {:run_failed, term()}}
   defp run(job, delivery, scope, handler, invoke) do
-    case call_bounded(JobTimeout.bound(job), handler, invoke, scope) do
+    case call_bounded(JobTimeout.bound(job, :invoke), handler, invoke, scope) do
       {:ok, donedata} -> {:ok, donedata}
       {:fan_out, items} -> {:fan_out, items, []}
       {:fan_out, items, opts} -> {:fan_out, items, opts}
