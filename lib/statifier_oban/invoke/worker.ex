@@ -525,7 +525,7 @@ defmodule StatifierOban.Invoke.Worker do
     :exit, reason ->
       detail = "exited: #{inspect(reason)}"
       maybe_fail(job, delivery, scope, handler, invoke, "run_crashed", detail)
-      exit(reason)
+      :erlang.raise(:exit, reason, __STACKTRACE__)
   end
 
   # A handler defines `run/1` or `run/2`, and `run/2` is the more
@@ -554,8 +554,9 @@ defmodule StatifierOban.Invoke.Worker do
   # no bound behaves exactly as it did before the option existed. A
   # finite bound runs the call in a linked task that captures every way
   # out of it - a return, a raise, an exit, a throw - and replays it in
-  # the job process, so `run/5`'s rescue and catch arms see what they
-  # always saw. The link means a job process killed by Oban's backstop
+  # the job process with the task's stacktrace, so `run/5`'s rescue and
+  # catch arms see what they always saw and the job records the frames
+  # the handler raised, exited or threw from. The link means a job process killed by Oban's backstop
   # takes the task with it.
   @spec call_bounded(JobTimeout.bound(), module(), Statifier.Effect.Invoke.t(), String.t()) ::
           {:ok, term()}
@@ -571,8 +572,8 @@ defmodule StatifierOban.Invoke.Worker do
     case Task.yield(task, bound) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:returned, result}} -> result
       {:ok, {:raised, exception, stacktrace}} -> reraise exception, stacktrace
-      {:ok, {:exited, reason}} -> exit(reason)
-      {:ok, {:thrown, value}} -> throw(value)
+      {:ok, {:exited, reason, stacktrace}} -> :erlang.raise(:exit, reason, stacktrace)
+      {:ok, {:thrown, value, stacktrace}} -> :erlang.raise(:throw, value, stacktrace)
       nil -> raise Oban.TimeoutError.exception({__MODULE__, bound})
     end
   end
@@ -580,15 +581,15 @@ defmodule StatifierOban.Invoke.Worker do
   @spec capture((-> term())) ::
           {:returned, term()}
           | {:raised, Exception.t(), Exception.stacktrace()}
-          | {:exited, term()}
-          | {:thrown, term()}
+          | {:exited, term(), Exception.stacktrace()}
+          | {:thrown, term(), Exception.stacktrace()}
   defp capture(fun) do
     {:returned, fun.()}
   rescue
     exception -> {:raised, exception, __STACKTRACE__}
   catch
-    :exit, reason -> {:exited, reason}
-    :throw, value -> {:thrown, value}
+    :exit, reason -> {:exited, reason, __STACKTRACE__}
+    :throw, value -> {:thrown, value, __STACKTRACE__}
   end
 
   @spec run_exported?(module()) :: boolean()
