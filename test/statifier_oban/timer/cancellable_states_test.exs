@@ -26,7 +26,7 @@ defmodule StatifierOban.Timer.CancellableStatesTest do
     queue = "cancellable_states_#{context.line}"
     {:ok, config} = Config.new(oban: @oban_name, timers_queue: queue)
 
-    %{config: config, scope: "run_#{context.line}"}
+    %{config: config, scope: "exec_#{context.line}"}
   end
 
   for state <- @pending_states do

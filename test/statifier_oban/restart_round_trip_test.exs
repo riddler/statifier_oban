@@ -44,7 +44,7 @@ defmodule StatifierOban.RestartRoundTripTest do
 
   setup context do
     queue = "round_trip_#{context.line}"
-    scope = "run_rt_#{context.line}"
+    scope = "exec_rt_#{context.line}"
 
     boot(@oban_before, :oban_before)
     {:ok, config_before} = Config.new(oban: @oban_before, timers_queue: queue)

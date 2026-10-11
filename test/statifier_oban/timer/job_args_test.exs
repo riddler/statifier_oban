@@ -36,9 +36,9 @@ defmodule StatifierOban.Timer.JobArgsTest do
 
       for owner <- [nil, {:onentry, 1, 2}, {:onexit, 3, 0}, {:transition, 7}, {:finalize, 2, 1}] do
         effect = %{base | owner: owner}
-        args = "run_1" |> from_effect!(effect) |> through_json()
+        args = "exec_1" |> from_effect!(effect) |> through_json()
 
-        assert {:ok, "run_1", %SendDelayed{owner: ^owner}} = JobArgs.to_effect(args)
+        assert {:ok, "exec_1", %SendDelayed{owner: ^owner}} = JobArgs.to_effect(args)
       end
     end
 
@@ -51,9 +51,9 @@ defmodule StatifierOban.Timer.JobArgsTest do
           caller_context: {:trace, 123_456_789, :span}
       }
 
-      args = "run_1" |> from_effect!(effect) |> through_json()
+      args = "exec_1" |> from_effect!(effect) |> through_json()
 
-      assert {:ok, "run_1",
+      assert {:ok, "exec_1",
               %SendDelayed{
                 data: {:tuple, ~c"charlist", %{nested: 1.5}},
                 caller_context: {:trace, 123_456_789, :span}
@@ -70,11 +70,11 @@ defmodule StatifierOban.Timer.JobArgsTest do
           caller_context: {:trace, 1}
       }
 
-      args = "run_1" |> from_effect!(effect, Xor) |> through_json()
+      args = "exec_1" |> from_effect!(effect, Xor) |> through_json()
 
       assert %{"codec" => "Elixir.StatifierOban.TestCodecs.Xor"} = args["data"]
 
-      assert {:ok, "run_1",
+      assert {:ok, "exec_1",
               %SendDelayed{data: %{"secret" => "value"}, caller_context: {:trace, 1}}} =
                JobArgs.to_effect(args)
     end
@@ -84,7 +84,7 @@ defmodule StatifierOban.Timer.JobArgsTest do
     # sabotage: fetch_binary/2 nil clause returned {:ok, "scope"} - went
     # red (missing scope decoded anyway), reverted.
     test "a missing required field is named" do
-      args = "run_1" |> from_effect!(send_delayed_fixture()) |> through_json()
+      args = "exec_1" |> from_effect!(send_delayed_fixture()) |> through_json()
 
       assert {:error, {:missing_field, "scope"}} = JobArgs.to_effect(Map.delete(args, "scope"))
 
@@ -95,7 +95,7 @@ defmodule StatifierOban.Timer.JobArgsTest do
     # sabotage: decode_owner_field/2 catch-all returned {:ok, nil} - went
     # red (garbage owner decoded to nil), reverted.
     test "a malformed owner is an invalid-field error, not a guess" do
-      args = "run_1" |> from_effect!(send_delayed_fixture()) |> through_json()
+      args = "exec_1" |> from_effect!(send_delayed_fixture()) |> through_json()
 
       assert {:error, {:invalid_field, "owner", ["script", 1]}} =
                JobArgs.to_effect(Map.put(args, "owner", ["script", 1]))
@@ -104,7 +104,7 @@ defmodule StatifierOban.Timer.JobArgsTest do
     # sabotage: decode_term/2 :error clause returned {:ok, nil} - went red
     # (corrupt payload decoded to nil), reverted.
     test "a corrupt opaque payload is an invalid-field error" do
-      args = "run_1" |> from_effect!(send_delayed_fixture()) |> through_json()
+      args = "exec_1" |> from_effect!(send_delayed_fixture()) |> through_json()
 
       assert {:error, {:invalid_field, "data", _}} =
                JobArgs.to_effect(Map.put(args, "data", %{"t2b64" => "not-base64!"}))
@@ -122,7 +122,7 @@ defmodule StatifierOban.Timer.JobArgsTest do
     # instead of the error), reverted.
     test "from_effect/3 fails closed when the codec's encode/1 fails" do
       assert {:error, {:codec_failed, "data", {:codec_failed, Boom, :boom}}} =
-               JobArgs.from_effect("run_1", send_delayed_fixture(), Boom)
+               JobArgs.from_effect("exec_1", send_delayed_fixture(), Boom)
     end
 
     # sabotage: apply_codec/3 (OpaqueTerm) let a raise propagate instead of
@@ -130,7 +130,7 @@ defmodule StatifierOban.Timer.JobArgsTest do
     # an error tuple), reverted.
     test "from_effect/3 fails closed when the codec's encode/1 raises" do
       assert {:error, {:codec_failed, "data", {:codec_failed, Raises, {:raised, _kind, _reason}}}} =
-               JobArgs.from_effect("run_1", send_delayed_fixture(), Raises)
+               JobArgs.from_effect("exec_1", send_delayed_fixture(), Raises)
     end
   end
 

@@ -45,8 +45,8 @@ defmodule StatifierOban.TimerTest do
     %{
       config: config,
       queue: queue,
-      scope_a: "run_#{context.line}_a",
-      scope_b: "run_#{context.line}_b"
+      scope_a: "exec_#{context.line}_a",
+      scope_b: "exec_#{context.line}_b"
     }
   end
 
@@ -515,7 +515,9 @@ defmodule StatifierOban.TimerTest do
     # `conf.repo.all(query)` - went red: the query telemetry arrived with
     # empty options and `oban_conf` was nil. A second mutation, dropping
     # `@scope_chunk` to 1, went red on the refute below: two scopes
-    # became two queries. Both reverted.
+    # became two queries. Both reverted. Both re-run, red the same way, once
+    # the relayed message carried its source and the asserts matched the
+    # jobs table by it.
     test "two scopes are one grouped query, issued through Oban.Repo on the instance's own config",
          %{config: config, scope_a: scope_a, scope_b: scope_b} do
       handler_id = "sob-6jw-#{:erlang.unique_integer([:positive])}"
@@ -531,15 +533,15 @@ defmodule StatifierOban.TimerTest do
 
       assert Timer.pending_for(config, [scope_a, scope_b]) == %{scope_a => 0, scope_b => 0}
 
-      assert_received {:repo_query, options}
+      assert_received {:repo_query, "oban_jobs", options}
       assert Keyword.get(options, :oban_conf) == Oban.config(@oban_name)
-      refute_received {:repo_query, _second}
+      refute_received {:repo_query, "oban_jobs", _second}
     end
   end
 
   @doc false
   def relay_query_options(_event, _measurements, metadata, parent) do
-    send(parent, {:repo_query, metadata.options})
+    send(parent, {:repo_query, metadata.source, metadata.options})
   end
 
   defp cancel_fixture do

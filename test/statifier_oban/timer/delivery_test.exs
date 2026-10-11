@@ -6,7 +6,7 @@ defmodule StatifierOban.Timer.DeliveryTest do
   alias Statifier.Evaluator.SystemVariables
   alias StatifierOban.Timer.Delivery
 
-  @scope "run_42"
+  @scope "exec_42"
 
   # A W3C traceparent map, the shape `docs/telemetry.md` directs a host
   # tracing through the seam to store: strings only, so it carries no
