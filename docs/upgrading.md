@@ -211,17 +211,19 @@ May start doing:
   `error.communication` needs no new transition. The cap is written onto
   each job when it is enqueued: jobs stored before the change keep the
   count they were enqueued with.
-- **Write the option as a literal keyword list in the `use` itself.** Any
-  value but a positive integer fails the handler's compile. An argument
+- **Write the option as a literal keyword list in the `use` itself.** A
+  positive integer sets the cap and `max_attempts: nil` declares none;
+  any other value fails the handler's compile. An argument
   that only holds a keyword list (a module attribute, a variable, a
   function call) is ignored whole and declares no cap, and so is a
   misspelt key; neither is an error, so check the handler's jobs carry
   the cap you meant.
-- **If you cap a handler whose work cannot be keyed on `invoke_id`, give
-  the chart its own deadline.** A node lost in the middle of the capped
-  attempt leaves the job to `Oban.Plugins.Lifeline`, which discards a job
-  with no attempts left without running it again and without delivering,
-  so the chart hears nothing from this package.
+- **If you cap a handler, give the chart its own deadline.** A node lost
+  in the middle of the capped attempt leaves the job to
+  `Oban.Plugins.Lifeline`, which discards a job with no attempts left
+  without running it again and without delivering, so the chart hears
+  nothing from this package, whether or not the work is keyed on
+  `invoke_id`.
 
 The README's "Capping handler attempts" section and the
 `StatifierOban.Invoke.Handler` documentation carry the detail.
