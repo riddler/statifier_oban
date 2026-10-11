@@ -6,9 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries for unreleased work are not written here directly. Each issue drops a
-fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.2/changelog.d/README.md); the fragments are assembled
+fragment in [`changelog.d/`](https://github.com/riddler/statifier_oban/blob/v0.17.3/changelog.d/README.md); the fragments are assembled
 into a version section at release. See that README for the format and for when a
 change warrants an entry at all.
+
+## [0.17.3] 2026-10-11
+
+### Fixed
+
+- An exit or throw out of the invoke worker's bounded call is replayed with the task's stacktrace.
+- A stored job bound above the limit for its kind is clamped to that limit.
 
 ## [0.17.2] 2026-10-08
 
