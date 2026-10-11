@@ -77,7 +77,7 @@ defmodule StatifierOban.Invoke.ChildStartWorker do
   alias StatifierOban.{JobTimeout, Telemetry}
 
   @impl Oban.Worker
-  def timeout(%Oban.Job{} = job), do: JobTimeout.bound(job)
+  def timeout(%Oban.Job{} = job), do: JobTimeout.bound(job, :child_start)
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta} = job) do

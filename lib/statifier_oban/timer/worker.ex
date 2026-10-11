@@ -78,7 +78,7 @@ defmodule StatifierOban.Timer.Worker do
   @default_delivery StatifierOban.Timer.Delivery.Session
 
   @impl Oban.Worker
-  def timeout(%Oban.Job{} = job), do: JobTimeout.bound(job)
+  def timeout(%Oban.Job{} = job), do: JobTimeout.bound(job, :timer)
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, meta: meta} = job) do

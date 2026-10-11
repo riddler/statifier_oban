@@ -2,7 +2,9 @@ defmodule StatifierOban.ConfigTest do
   use ExUnit.Case, async: true
 
   alias StatifierOban.{Config, JobTimeout}
+  alias StatifierOban.Invoke.ChildStartWorker
   alias StatifierOban.Invoke.Worker, as: InvokeWorker
+  alias StatifierOban.Timer.Worker, as: TimerWorker
 
   # sabotage: fetch_required :error -> {:ok, :fallback} broke the missing-
   # option doctests; check_unknown -> :ok broke the unknown-options doctest
@@ -274,6 +276,30 @@ defmodule StatifierOban.ConfigTest do
     job = %Oban.Job{meta: %{"timeout" => max}}
 
     assert InvokeWorker.timeout(job) == 4_294_967_295
+  end
+
+  # A validated config never stores a bound past its kind's limit, but a
+  # hand-edited row or a config struct built without `new/1` can; each
+  # worker reads such a bound as its kind's limit, and a bound at the
+  # limit exactly as stored.
+  #
+  # sabotage: `bound/2` returned the stored value without the clamp - went
+  # red (4294967296 came back for the invoke limit); the timer worker and
+  # the child-start worker each read with the `:invoke` kind - went red
+  # (the invoke limit came back for theirs); the invoke worker's
+  # `timeout/1` read with the `:timer` kind - went red (the limit plus
+  # the margin came back); each reverted.
+  test "a stored bound above its kind's limit reads as that limit" do
+    over = 4_294_967_295 + 1
+    above = %Oban.Job{meta: %{"timeout" => over}}
+    at_invoke = %Oban.Job{meta: %{"timeout" => JobTimeout.max_bound(:invoke)}}
+
+    assert JobTimeout.bound(above, :invoke) == 4_294_967_295 - 5_000
+    assert JobTimeout.bound(at_invoke, :invoke) == 4_294_967_295 - 5_000
+    assert InvokeWorker.timeout(above) == 4_294_967_295
+    assert ChildStartWorker.timeout(above) == 4_294_967_295
+    assert TimerWorker.timeout(above) == 4_294_967_295
+    assert TimerWorker.timeout(%Oban.Job{meta: %{"timeout" => 1_000}}) == 1_000
   end
 
   # -- the unresolvable-handler policy (sob-nnp) ---------------------------

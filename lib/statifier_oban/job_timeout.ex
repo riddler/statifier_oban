@@ -18,6 +18,15 @@ defmodule StatifierOban.JobTimeout do
   # any other value on the row reads as no bound, because the key is only
   # ever written from a validated config and a hand-edited row is not a
   # reason to kill the host's work early.
+  #
+  # A positive integer above the limit for the job's kind (`max_bound/1`)
+  # reads as that limit. A validated config never writes one, but a
+  # hand-edited row or a config struct built without `new/1` can, and
+  # past the limit the invoke worker's own wait raises, and far enough
+  # past it Oban's timeout path fails too (`@receive_limit_ms` below), so
+  # an attempt would fail at the wait instead of being bounded. The read
+  # path is the one place every worker shares, so the clamp lives here,
+  # and a stored bound at or under the limit reads exactly as written.
 
   @meta_key "timeout"
 
@@ -54,10 +63,10 @@ defmodule StatifierOban.JobTimeout do
     do: Map.put(meta, @meta_key, bound)
 
   @doc false
-  @spec bound(Oban.Job.t()) :: bound()
-  def bound(%Oban.Job{meta: meta}) do
+  @spec bound(Oban.Job.t(), :invoke | :child_start | :timer) :: bound()
+  def bound(%Oban.Job{meta: meta}, kind) do
     case meta do
-      %{@meta_key => bound} when is_integer(bound) and bound > 0 -> bound
+      %{@meta_key => bound} when is_integer(bound) and bound > 0 -> min(bound, max_bound(kind))
       _other -> :infinity
     end
   end
