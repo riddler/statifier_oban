@@ -44,8 +44,8 @@ defmodule StatifierOban.Timer.KeyTest do
     # sabotage: hardcoded `ordinal: 1` in the `%DedupKey{}` build in
     # `Key.dedup_key/2` - test went red (ordinal 7 came back as 1), reverted.
     test "copies scope and ordinal off the SendDelayed (compact form)" do
-      assert {:ok, %DedupKey{scope: "run-1", ordinal: 7}} =
-               Key.dedup_key("run-1", send_delayed(%{ordinal: 7}))
+      assert {:ok, %DedupKey{scope: "exec-1", ordinal: 7}} =
+               Key.dedup_key("exec-1", send_delayed(%{ordinal: 7}))
     end
 
     # sabotage: bound `macrostep: m` in `dedup_key/2`'s head and changed the
@@ -65,7 +65,7 @@ defmodule StatifierOban.Timer.KeyTest do
           id_from_author?: true
         })
 
-      assert Key.dedup_key("run-1", base) == Key.dedup_key("run-1", moved)
+      assert Key.dedup_key("exec-1", base) == Key.dedup_key("exec-1", moved)
     end
 
     # sabotage: changed `validated_ordinal/1`'s fallback clause to
@@ -74,7 +74,7 @@ defmodule StatifierOban.Timer.KeyTest do
     test "returns missing_ordinal when ordinal is nil or not a positive integer" do
       for bad_ordinal <- [nil, 0, -1, "1"] do
         assert {:error, :missing_ordinal} =
-                 Key.dedup_key("run-1", send_delayed(%{ordinal: bad_ordinal}))
+                 Key.dedup_key("exec-1", send_delayed(%{ordinal: bad_ordinal}))
       end
     end
 
@@ -92,7 +92,7 @@ defmodule StatifierOban.Timer.KeyTest do
     # matching, test went red, reverted.
     test "is deterministic across repeated calls with equal inputs" do
       effect = send_delayed()
-      assert Key.dedup_key("run-1", effect) == Key.dedup_key("run-1", effect)
+      assert Key.dedup_key("exec-1", effect) == Key.dedup_key("exec-1", effect)
     end
   end
 
@@ -100,8 +100,8 @@ defmodule StatifierOban.Timer.KeyTest do
     # sabotage: changed the SendDelayed clause of cancellation_key/2 to read
     # `send_id <> "!"` instead of `send_id` - test went red, reverted.
     test "SendDelayed and matching Cancel produce equal keys" do
-      assert Key.cancellation_key("run-1", send_delayed(%{send_id: "send_1"})) ==
-               Key.cancellation_key("run-1", cancel(%{send_id: "send_1"}))
+      assert Key.cancellation_key("exec-1", send_delayed(%{send_id: "send_1"})) ==
+               Key.cancellation_key("exec-1", cancel(%{send_id: "send_1"}))
     end
 
     # sabotage: folded `macrostep` into the cancellation key's `send_id`
@@ -117,8 +117,8 @@ defmodule StatifierOban.Timer.KeyTest do
           ordinal: 99
         })
 
-      assert {:ok, %CancellationKey{scope: "run-1", send_id: "send_1"}} =
-               Key.cancellation_key("run-1", effect)
+      assert {:ok, %CancellationKey{scope: "exec-1", send_id: "send_1"}} =
+               Key.cancellation_key("exec-1", effect)
     end
 
     # sabotage: changed the `validated_scope(_scope)` fallback to
@@ -134,7 +134,7 @@ defmodule StatifierOban.Timer.KeyTest do
     # test went red, reverted.
     test "returns missing_send_id when SendDelayed.send_id is nil" do
       assert {:error, :missing_send_id} =
-               Key.cancellation_key("run-1", send_delayed(%{send_id: nil}))
+               Key.cancellation_key("exec-1", send_delayed(%{send_id: nil}))
     end
 
     # sabotage: appended `<> Integer.to_string(System.unique_integer())` to
@@ -142,7 +142,7 @@ defmodule StatifierOban.Timer.KeyTest do
     # stopped matching, test went red, reverted.
     test "is deterministic across repeated calls with equal inputs" do
       effect = cancel()
-      assert Key.cancellation_key("run-1", effect) == Key.cancellation_key("run-1", effect)
+      assert Key.cancellation_key("exec-1", effect) == Key.cancellation_key("exec-1", effect)
     end
   end
 
@@ -151,7 +151,7 @@ defmodule StatifierOban.Timer.KeyTest do
     # `def cancels?(%CancellationKey{}, _scope, %SendDelayed{}), do: false`
     # clause - test went red, reverted.
     test "true when scope and send_id match regardless of position and ordinal" do
-      {:ok, cancellation_key} = Key.cancellation_key("run-1", cancel(%{send_id: "send_1"}))
+      {:ok, cancellation_key} = Key.cancellation_key("exec-1", cancel(%{send_id: "send_1"}))
 
       stored_effect =
         send_delayed(%{
@@ -164,25 +164,25 @@ defmodule StatifierOban.Timer.KeyTest do
           ordinal: 42
         })
 
-      assert Key.cancels?(cancellation_key, "run-1", stored_effect)
+      assert Key.cancels?(cancellation_key, "exec-1", stored_effect)
     end
 
     # sabotage: dropped the scope equality from `cancels?/3`'s matching
     # clause (bound the key's scope and the scope argument to different
     # variables) - test went red, reverted.
     test "false when scope differs" do
-      {:ok, cancellation_key} = Key.cancellation_key("run-1", cancel(%{send_id: "send_1"}))
+      {:ok, cancellation_key} = Key.cancellation_key("exec-1", cancel(%{send_id: "send_1"}))
 
-      refute Key.cancels?(cancellation_key, "run-2", send_delayed(%{send_id: "send_1"}))
+      refute Key.cancels?(cancellation_key, "exec-2", send_delayed(%{send_id: "send_1"}))
     end
 
     # sabotage: dropped the send_id equality from `cancels?/3`'s matching
     # clause (bound the key's send_id and the effect's send_id to different
     # variables) - test went red, reverted.
     test "false when send_id differs" do
-      {:ok, cancellation_key} = Key.cancellation_key("run-1", cancel(%{send_id: "send_1"}))
+      {:ok, cancellation_key} = Key.cancellation_key("exec-1", cancel(%{send_id: "send_1"}))
 
-      refute Key.cancels?(cancellation_key, "run-1", send_delayed(%{send_id: "send_2"}))
+      refute Key.cancels?(cancellation_key, "exec-1", send_delayed(%{send_id: "send_2"}))
     end
   end
 end

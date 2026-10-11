@@ -221,8 +221,15 @@ defmodule StatifierOban.Timer do
   `Oban.Repo` on the instance's own `Oban.config/1`, so the repo, the
   prefix and the log setting are the host instance's rather than
   anything this package configures. A scopes list longer than the chunk
-  size is counted in several such queries and the counts merged;
-  duplicate scopes are asked once.
+  size (500 scopes) is counted in several such queries and the counts
+  merged; duplicate scopes are asked once. Each query reads its own
+  chunk at its own moment, so such an answer is a snapshot per chunk,
+  not of one point in time: a timer scheduled, fired or cancelled
+  between two of the queries is counted as its own chunk's query saw it.
+
+  Raises when the Oban instance is not running or its repo cannot
+  answer, rather than answering with zeros, so "no pending timers" and
+  "could not count" stay two answers.
   """
   @spec pending_for(Config.t(), [Key.scope()]) :: %{Key.scope() => non_neg_integer()}
   def pending_for(%Config{} = config, scopes) when is_list(scopes) do
