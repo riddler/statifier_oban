@@ -386,6 +386,33 @@ defmodule StatifierOban.Invoke.WorkerTest do
     assert failure[:attempts] == 1
   end
 
+  # sabotage: `UnresolvedHandler.cancel?/1` was widened to any present
+  # key (`Map.has_key?(meta, @meta_key)`) - went red (the job cancelled
+  # and delivered invalid_handler instead of retrying), reverted.
+  test "a stored unresolved_handler value other than \"cancel\" reads as the retry policy" do
+    Process.register(self(), :invoke_worker_test_listener)
+
+    args =
+      "sess_iw_nohandler_retry"
+      |> args_for("inv_nohandler_retry", TestInvokeHandler)
+      |> Map.put("handler", "Elixir.StatifierOban.NoSuchHandler")
+
+    insert!(args,
+      meta: %{
+        "delivery" => Atom.to_string(RecordingDelivery),
+        "unresolved_handler" => "retry"
+      }
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{state: "retryable", errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_nohandler_retry", "inv_nohandler_retry")
+
+    assert error =~ "invalid_handler"
+    refute_received {:failed_via_seam, _scope, _invoke_id, _failure}
+  end
+
   # sabotage: `unresolved_handler/5`'s cancel branch used the default
   # delivery module instead of resolving the job's meta - went red (the
   # job cancelled instead of retrying), reverted.
