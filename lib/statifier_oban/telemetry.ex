@@ -114,9 +114,9 @@ defmodule StatifierOban.Telemetry do
   `"run_crashed"`, `"undecodable"`, `"fan_out_refused"`,
   `"invalid_handler"`) and its `attempts` semantics. Its `handler` is
   `nil` on the `"undecodable"` class and on the `"invalid_handler"`
-  class alike: on both, the row never reached handler resolution -
-  either the decode that would have named the module is the thing that
-  failed, or the resolution itself is.
+  class alike: on both, no handler module was resolved - either the
+  decode that would have named the module is the thing that failed, or
+  the resolution itself is.
 
   A failure outside the invocation emits nothing here: under the default
   `StatifierOban.Config` `:unresolved_handler` `:retry`, the environment
@@ -524,7 +524,8 @@ defmodule StatifierOban.Telemetry do
   `max_attempts` for the two `run/1` classes, the cancelling attempt's own
   number for `"undecodable"`, `"fan_out_refused"` and `"invalid_handler"`.
   `handler` is `nil` for `"undecodable"` and for `"invalid_handler"`
-  alike, where the row never reached handler resolution.
+  alike, where no handler module was resolved: the decode failed before
+  resolution, or the resolution itself failed.
   """
   @spec invoke_failed(
           scope(),
