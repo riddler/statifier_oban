@@ -88,8 +88,10 @@ git tag --list --sort=-v:refname | head -1  # what has been tagged
 The tag follows the merged prep: once a release bead's bump is merged to
 `origin/main`, the conductor or the session that owns the release bead tags
 that merged commit with the new version, so the tagged version lags the
-attribute only between the prep's merge and its tag. The Hex publish is the
-operator's alone. Never edit the version field as part of an ordinary commit.
+attribute only between the prep's merge and its tag. The release workflow
+publishes on the tag push (ADR-0011): an agent or a session never runs `mix
+hex.publish`, and a failed workflow is re-run from its Actions page. Never
+edit the version field as part of an ordinary commit.
 
 ## Gate thresholds are the operator's call
 
