@@ -1,6 +1,6 @@
 # ADR-0005: Permanent invoke failure delivers on the terminal attempt
 
-Status: accepted (2026-08-27, sob-nnh) - amended 2026-08-29 (sob-aty, PR 40: decision 6 narrowed, undecodable-payload arm delivers)
+Status: accepted (2026-08-27, sob-nnh) - amended 2026-08-29 (sob-aty, PR 40: decision 6 narrowed, undecodable-payload arm delivers) - amended 2026-09-24 (PR 102: decision 6 reversed for the `:invalid_handler` arm under `:unresolved_handler` `:cancel`) - amended 2026-09-26 (PR 123: a handler may cap its own attempts, the terminal attempt moves with the cap)
 
 ## Context
 
