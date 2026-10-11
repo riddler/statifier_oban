@@ -214,11 +214,14 @@ defmodule StatifierOban.Invoke.Worker do
     end
   end
 
-  # The handler resolves before the delivery module, so a row on which
-  # both are unresolvable still retries with `{:invalid_handler, _}`, as
-  # it always has. Only an unresolvable handler reaches the
-  # `:unresolved_handler` policy; an unresolvable delivery module falls
-  # through and retries under either policy.
+  # The handler resolves before the delivery module, so under the default
+  # `:unresolved_handler` `:retry` a row on which both are unresolvable
+  # still retries with `{:invalid_handler, _}`, as it always has; under
+  # `:cancel`, `unresolved_handler/5` resolves the delivery module first,
+  # so the same row retries with `{:invalid_delivery, _}` instead. Only
+  # an unresolvable handler reaches the `:unresolved_handler` policy; an
+  # unresolvable delivery module falls through and retries under either
+  # policy.
   @spec resolve_and_execute(Oban.Job.t(), String.t(), String.t(), Statifier.Effect.Invoke.t()) ::
           :ok | {:cancel, term()} | {:error, term()}
   defp resolve_and_execute(%Oban.Job{meta: meta} = job, scope, handler_name, invoke) do
@@ -409,8 +412,9 @@ defmodule StatifierOban.Invoke.Worker do
 
       # `handler` is `nil` here, and on the `"invalid_handler"` cancel
       # below: in both cases the thing that failed is the very step that
-      # would have named the module, so it was never resolved. ADR-0006's
-      # table carries the same note.
+      # would have named the module, so it was never resolved.
+      # `docs/telemetry.md` and `StatifierOban.Telemetry.invoke_failed/7`'s
+      # doc carry the same note.
       Telemetry.invoke_failed(scope, nil, invoke_id, "undecodable", detail, attempt, job_id)
     end
 

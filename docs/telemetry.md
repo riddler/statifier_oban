@@ -186,7 +186,7 @@ Emitted on the Oban worker process, inside the job.
 | `[:statifier_oban, :timer, :discarded]` | `Timer.Worker.perform/1`, on `{:discarded, reason}` | `system_time`, `attempt` | `scope`, `send_id`, `ordinal`, `delivery`, `reason`, `job_id`, `caller_context` |
 | `[:statifier_oban, :invoke, :delivered]` | `Invoke.Worker.perform/1`, after `:delivered` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
 | `[:statifier_oban, :invoke, :discarded]` | `Invoke.Worker.perform/1`, on `{:discarded, reason}` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `reason`, `job_id` |
-| `[:statifier_oban, :invoke, :failed]` | `Invoke.Worker`'s terminal-attempt failure path | `system_time`, `attempts` | `scope`, `invoke_id`, `reason`, `detail`, `handler`, `job_id` |
+| `[:statifier_oban, :invoke, :failed]` | `Invoke.Worker`'s failure deliveries: the terminal attempt for `"run_failed"` and `"run_crashed"`, the cancelling attempt for `"undecodable"`, `"fan_out_refused"` and `"invalid_handler"` | `system_time`, `attempts` | `scope`, `invoke_id`, `reason`, `detail`, `handler`, `job_id` |
 | `[:statifier_oban, :invoke, :deferred]` | `Invoke.Worker.perform/1`, when `run/1` or `run/2` answers `:deferred` | `system_time`, `attempt` | `scope`, `invoke_id`, `macrostep`, `handler`, `delivery`, `job_id` |
 
 **There is no lateness measurement here, on purpose.** How far past its due
