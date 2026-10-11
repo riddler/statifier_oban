@@ -274,3 +274,15 @@ true}` (`defp deps`) and `{:statifier, "~> 2.5"}` (`statifier_dep/0`).
 The lock is what this package's own gate and tests build against; a host
 resolves its own versions inside those requirements. This Note decides
 nothing and changes no decision above.
+
+## Note (2026-10-11): the Context is the state before `eb47942`
+
+The Context's readings of this repository, each at `53631ca` ("Today
+nothing ships the adapter between the two", the README sentence that
+nothing ships in either package, and `mix.exs` with no
+`statifier_persistence` entry), describe the state before the implementing
+commit `eb47942`, which reversed all three (decisions 1 and 2, and the
+README's direction as the Consequences say); and the widening decision 7
+left to `statifier_persistence` has landed, as the 2026-09-23 Note records
+(`defp ask`, `84c25ea`). This Note decides nothing and changes no decision
+above.
