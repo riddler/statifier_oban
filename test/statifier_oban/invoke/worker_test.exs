@@ -867,6 +867,41 @@ defmodule StatifierOban.Invoke.WorkerTest do
     refute error =~ "run_failed"
   end
 
+  # sabotage: the `{:exited, _, _}` arm exited with `exit(reason)`, dropping
+  # the task's stacktrace - went red (the recorded error lost the handler's
+  # frame), reverted. Also: `run/5`'s catch arm re-exited with
+  # `exit(reason)` - went red the same way, reverted.
+  test "a bounded handler's exit is recorded with the handler's frame" do
+    insert!(args_for("sess_iw_bounded_exit_st", "inv_bounded_exit_st", ExitingRunHandler),
+      meta: %{"timeout" => 1_000}
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_bounded_exit_st", "inv_bounded_exit_st")
+
+    assert error =~ "gateway_gone"
+    assert error =~ "ExitingRunHandler.run/1"
+  end
+
+  # sabotage: the `{:thrown, _, _}` arm threw with `throw(value)`, dropping
+  # the task's stacktrace - went red (the recorded error lost the handler's
+  # frame), reverted.
+  test "a bounded handler's throw is recorded with the handler's frame" do
+    insert!(args_for("sess_iw_bounded_throw_st", "inv_bounded_throw_st", ThrowingRunHandler),
+      meta: %{"timeout" => 1_000}
+    )
+
+    assert %{failure: 1, success: 0, cancelled: 0} = drain()
+
+    assert [%Oban.Job{errors: [%{"error" => error} | _rest]}] =
+             jobs("sess_iw_bounded_throw_st", "inv_bounded_throw_st")
+
+    assert error =~ "gateway_thrown"
+    assert error =~ "ThrowingRunHandler.run/1"
+  end
+
   # sabotage: `call_bounded/4`'s `:infinity` clause was removed, so an
   # unbounded job ran through a task too - went red (the handler ran in
   # a process other than the job's), reverted.
