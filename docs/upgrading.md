@@ -1,8 +1,8 @@
 # Upgrading a host from 0.11 to 0.17
 
 This page says what a host changes to move `statifier_oban` from 0.11.0 to
-0.17.1, one minor at a time: 0.11 to 0.12, 0.12 to 0.13, 0.13 to 0.14,
-0.14 to 0.15, 0.15 to 0.16 and 0.16 to 0.17. A host
+any 0.17.x patch, one minor at a time: 0.11 to 0.12, 0.12 to 0.13,
+0.13 to 0.14, 0.14 to 0.15, 0.15 to 0.16 and 0.16 to 0.17. A host
 here is the code that embeds the package: the `StatifierOban.Config` it
 builds, the Oban instance and queues it runs the jobs on, its invoke
 handlers, any `StatifierOban.Timer.Delivery` or
