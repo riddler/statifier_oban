@@ -715,3 +715,29 @@ is created on the delivery path. Every claim below was read at
   `{:invalid_option, key, value}` shape the config already answers for an
   invalid value of its other options (`fetch_timeout/2` in
   `lib/statifier_oban/config.ex`).
+
+## Note (2026-10-11): the timer half is answered, an undecodable delayed-send row cancels silently
+
+The 2026-08-29 Amendment's paragraph "**Not decided here: the timer
+half.**" left open whether an undecodable *delayed-send* payload has a
+report analogous to the invoke arm's. It is answered, ruled by the
+operator, 2026-10-10: the silent cancel stays, and no new event spelling
+is added. Every claim below was read at `02c74cc`. This Note changes no
+Status and no decision of this record.
+
+- What happens. `StatifierOban.Timer.Worker` cancels the job when its
+  stored row cannot be decoded: `decode/1` answers
+  `{:cancel, {:undecodable, reason}}` (`decode/1` in
+  `lib/statifier_oban/timer/worker.ex`). Nothing is delivered into the
+  chart, and this package emits no telemetry event of its own for it:
+  `perform/1` in the same file calls `Telemetry.timer_fired/4` and
+  `Telemetry.timer_discarded/5` only for a row that decoded.
+- What a host sees. The job record, cancelled with
+  `{:undecodable, reason}` in its recorded errors, and Oban's own job
+  event for that cancel. These are the host's signal.
+- Why silent. A lost timer row is indistinguishable from one not yet
+  fired, and a fire may already find its execution not live
+  (statifier-ex ADR-0054 decision 4).
+- Upstream. statifier-ex's ADR-0068 holds the library's half of the same
+  question, in a paragraph of the same name; the answer above was ruled
+  for both halves.

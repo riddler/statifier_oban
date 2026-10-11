@@ -37,7 +37,12 @@ defmodule StatifierOban.Timer.Worker do
     A snooze-shaped answer that is not that - zero, a negative count,
     an Oban period tuple - matches no clause and retries like a raise;
   - an undecodable row cancels with `{:undecodable, reason}` - no number
-    of retries makes a corrupt row decodable;
+    of retries makes a corrupt row decodable. The cancel is silent:
+    nothing is delivered into the chart, no new event is spelled, and
+    this package emits no event of its own. What a host sees is the job
+    record, cancelled with `{:undecodable, reason}` in its recorded
+    errors, and Oban's own job event for it (`[:oban, :job, :stop]`,
+    state `:cancelled`, the same reason in its `:result`);
   - a codec named on the row that this node cannot resolve, or one that
     cannot decode the row right now, returns `{:error, {:invalid_codec,
     _}}` or `{:error, {:codec_failed, _}}` and retries - an environment
