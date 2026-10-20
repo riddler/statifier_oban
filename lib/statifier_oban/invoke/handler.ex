@@ -294,6 +294,7 @@ defmodule StatifierOban.Invoke.Handler do
           | {:invalid_scope, term()}
           | JobArgs.encode_error()
           | Ecto.Changeset.t()
+          | Exception.t()
 
   @doc """
   The host's `StatifierOban.Config` - the Oban instance, the
@@ -463,6 +464,15 @@ defmodule StatifierOban.Invoke.Handler do
   `content` before the job is stored. The module name travels on the row
   alongside the encoded bytes, so the worker that later decodes the job
   and runs `handler.run/1` needs no configuration of its own.
+
+  Besides the rejections `t:perform_error/0` lists by shape, the call can
+  answer `{:error, exception}`: `Oban.insert/2` hands back, unchanged,
+  the exception its retrying transaction logs when the host compiled
+  `Oban.Repo` retry options with `on_exhausted: :log`. It is most often
+  the case a host meets when it calls this inside a transaction of its
+  own that has already been lost (ADR-0002's Note on a host's
+  transaction). The Lite engine opens no such transaction, so it never
+  answers this on SQLite.
   """
   @spec perform_start(module(), Invoke.t(), UpstreamHandler.ctx()) ::
           :ok | {:error, perform_error()}
@@ -568,6 +578,11 @@ defmodule StatifierOban.Invoke.Handler do
   the self-cancel and the outside cancel are indistinguishable, and a
   host that needs it holds the job id and can call `Oban.cancel_job/2`
   itself.
+
+  The cancel is one update in no transaction of this package's, so it
+  never answers the exception case of `t:perform_error/0`: a failed
+  statement raises to the caller, and the only error returned is
+  `{:invalid_scope, ctx}`.
   """
   @spec perform_cancel(module(), String.t(), UpstreamHandler.ctx()) ::
           :ok | {:error, perform_error()}

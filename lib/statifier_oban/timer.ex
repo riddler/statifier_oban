@@ -76,6 +76,7 @@ defmodule StatifierOban.Timer do
           | Key.error()
           | JobArgs.encode_error()
           | Ecto.Changeset.t()
+          | Exception.t()
 
   @doc """
   Schedules one `%SendDelayed{}` as one Oban job, unique per dedup key.
@@ -93,6 +94,15 @@ defmodule StatifierOban.Timer do
   the stored job (same scheduling decision) rather than inserting a
   second one. A finite `:timer_timeout` rides in the same meta, and the
   worker's `timeout/1` reads it back as the fired job's run-time bound.
+
+  Besides the rejections `t:schedule_error/0` lists by shape, the call can
+  answer `{:error, exception}`: `Oban.insert/2` hands back, unchanged,
+  the exception its retrying transaction logs when the host compiled
+  `Oban.Repo` retry options with `on_exhausted: :log`. It is most often
+  the case a host meets when it calls this inside a transaction of its
+  own that has already been lost (ADR-0002's Note on a host's
+  transaction). The Lite engine opens no such transaction, so it never
+  answers this on SQLite.
   """
   @spec schedule(Config.t(), Key.scope(), SendDelayed.t()) ::
           {:ok, Oban.Job.t()} | {:error, schedule_error()}
