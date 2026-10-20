@@ -845,6 +845,13 @@ left to raise, which is what puts the job back in Oban's hands. The chart the
 execution runs is the host's to resolve - this package stores no chart
 identity on a timer job - hence `machine_for!/1`.
 
+That resolver is an argument to `step/5`, so it runs before `step/5` can answer
+not-found. The not-found arm is only reachable when the resolver returns for an
+execution the store does not hold: it must tolerate a missing execution, for
+example by resolving the chart from something other than the execution row. A
+resolver that raises on a missing execution never reaches the arm, and the job
+retries to `max_attempts` instead of discarding.
+
 `{:error, {:needs_migration, execution}}` is the one error with an arm of its
 own, because it is the easiest to mistake for a discard. `step/5` answers it
 for an execution a chart migration parked: the execution is not finished, and
