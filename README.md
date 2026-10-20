@@ -896,6 +896,35 @@ to the documented default. So the seam is chosen per config at schedule time
 and travels with the job - a host that changes it does not re-key jobs
 already stored, because the unique fields exclude the meta on purpose.
 
+### Inside the step's transaction: Oban's nested retry
+
+A host whose executor runs its effects inside the step's own transaction
+and calls `StatifierOban.Timer.schedule/3` or
+`StatifierOban.Invoke.Handler.perform_start/3` (or `StatifierOban.Invoke.FanOut.start/5`) there makes an insert that
+Oban wraps in its own retrying `Oban.Repo.transaction/3` (the Basic
+engine; the Lite engine opens no transaction). Inside an enclosing
+transaction that retry cannot succeed: the first failed attempt marks the
+connection aborted, every attempt then fails the same way, and the sleeps
+hold the enclosing transaction open until the retry budget is spent. The
+cancel calls (`Timer.cancel/3`, `Invoke.Handler.perform_cancel/3`) are one
+update in no transaction and are not retried.
+
+The one setting that reaches the transaction, and so can switch the retry off, is the host's compile-time
+`config :oban, Oban.Repo, retry_opts: [...]`; at the Oban version the Note was
+read against (2.23.1) a per-call option on `Oban.insert/3` does not reach it. It needs `:oban`
+recompiled and governs every `Oban.Repo.transaction/3` the host's Oban
+instance makes. A host that wants the statement's own error raised at once
+sets `retry: false` there and keeps `on_exhausted: :raise`. With the
+defaults, the insert raises after the budget with the "transaction rolling
+back" error, which masks the statement's. With `on_exhausted: :log`, the
+insert returns `{:error, exception}` and `Timer.schedule/3` and
+`perform_start/3` answer that over a transaction already lost. Either way
+the enclosing transaction does not commit. This package passes no retry
+option, because none reaches the transaction at that version, and sets no Oban configuration; the instance and its configuration
+are the host's. The reasoning, with the Oban source it was read against, is
+the [ADR-0002 Note on a host's transaction around an
+insert](https://github.com/riddler/statifier_oban/blob/main/docs/adr/0002-host-supplied-oban-instance.md#note-2026-09-23-a-hosts-transaction-around-an-insert-and-obans-retry).
+
 ## Timers days out
 
 A timer that waits days is one job row for all of that time, and the row is
